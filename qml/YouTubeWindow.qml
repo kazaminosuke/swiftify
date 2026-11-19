@@ -337,13 +337,16 @@ ApplicationWindow {
             spacing: 12
 
             Button {
+                id: brandButton
+
                 implicitWidth: 122
                 implicitHeight: 44
                 Accessible.name: qsTr("Developed with YouTube. Open YouTube.")
                 onClicked: window.music.openSource()
                 background: Rectangle {
                     radius: Appearance.rounding.small
-                    color: parent.visualFocus || parent.hovered ? Appearance.colors.surfaceContainerHigh : "transparent"
+                    color: brandButton.visualFocus || brandButton.hovered
+                        ? Appearance.colors.surfaceContainerHigh : "transparent"
                 }
                 contentItem: Image {
                     source: Theme.dark
