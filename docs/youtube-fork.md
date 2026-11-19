@@ -49,6 +49,7 @@ are separately governed by the YouTube API branding guidelines.
 | --- | --- | --- |
 | 2026-11-19 21:22 | Start, official Codex App Server `account/rateLimits/read` | HTTP 401. Remaining usage and all limit windows unavailable. |
 | 2026-11-19 21:27 | Repository and API review, official App Server stdio and daemon proxy | HTTP 401 through stdio. The daemon control socket was absent. No percentage inferred. |
+| 2026-11-19 21:34 | Data API tests and Google OAuth tests, official App Server | HTTP 401. No percentage available. |
 
 Next priorities are the Qt Quick shell, Google OAuth and account library,
 then cross-platform package and browser-handoff verification.
