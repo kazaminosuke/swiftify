@@ -665,5 +665,13 @@
   "Could not connect to YouTube. Check your network and try again.": "Verbindung mit YouTube fehlgeschlagen. Prüfe deine Internetverbindung und versuche es erneut.",
   "YouTube could not find this collection.": "YouTube konnte diese Sammlung nicht finden.",
   "The YouTube API request failed (HTTP %1).": "Die Anfrage an die YouTube-API ist fehlgeschlagen (HTTP %1).",
-  "YouTube returned an unreadable response.": "YouTube hat eine unlesbare Antwort zurückgegeben."
+  "YouTube returned an unreadable response.": "YouTube hat eine unlesbare Antwort zurückgegeben.",
+  "Google sign-in timed out. Try again.": "Die Google-Anmeldung hat zu lange gedauert. Bitte erneut versuchen.",
+  "Could not start the loopback listener for Google sign-in.": "Der lokale Listener für die Google-Anmeldung konnte nicht gestartet werden.",
+  "Return to Swiftify to check the sign-in result.": "Kehre zu Swiftify zurück, um das Anmeldeergebnis zu sehen.",
+  "Could not open your browser for Google sign-in.": "Der Browser für die Google-Anmeldung konnte nicht geöffnet werden.",
+  "Google did not grant access to the YouTube library.": "Google hat keinen Zugriff auf die YouTube-Mediathek gewährt.",
+  "Google sign-in or token refresh failed. Sign in again.": "Die Google-Anmeldung oder Erneuerung des Zugriffs ist fehlgeschlagen. Bitte erneut anmelden.",
+  "Google sign-in was declined.": "Die Google-Anmeldung wurde abgelehnt.",
+  "Signed out locally. To revoke this app's access, use your Google Account settings.": "Du wurdest lokal abgemeldet. Widerrufe den App-Zugriff in den Einstellungen deines Google-Kontos."
 }
