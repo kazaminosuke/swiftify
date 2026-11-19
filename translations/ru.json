@@ -665,5 +665,12 @@
   "not a spotify artist: %1": "Этот адрес не является страницей исполнителя Spotify: %1",
   "the artist could not be read: %1": "Не удалось обработать сведения об исполнителе: %1",
   "a required string was missing": "Отсутствует обязательный параметр",
-  "a string was not valid utf-8": "Текст содержит некорректную последовательность UTF-8"
+  "a string was not valid utf-8": "Текст содержит некорректную последовательность UTF-8",
+  "YouTube authorization expired. Sign in again.": "Срок авторизации YouTube истёк. Войдите снова.",
+  "The YouTube API quota has been reached. Try again later.": "Квота API YouTube исчерпана. Повторите попытку позже.",
+  "YouTube denied access. Check the API configuration or account permissions.": "YouTube отклонил доступ. Проверьте настройки API или разрешения аккаунта.",
+  "Could not connect to YouTube. Check your network and try again.": "Не удалось подключиться к YouTube. Проверьте подключение к сети и повторите попытку.",
+  "YouTube could not find this collection.": "YouTube не нашёл эту коллекцию.",
+  "The YouTube API request failed (HTTP %1).": "Запрос к API YouTube не выполнен (HTTP %1).",
+  "YouTube returned an unreadable response.": "YouTube вернул ответ, который не удалось прочитать."
 }
