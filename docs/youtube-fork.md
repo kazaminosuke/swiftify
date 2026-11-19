@@ -75,6 +75,34 @@ Music varies. Swiftify never receives PCM audio from browser playback.
 Run `swiftify --spotify` for the upstream workspace and its local playback,
 DSP, equalizer, lyrics and visualizers.
 
+## Verification record
+
+- Linux developer build with Qt 6.10.3. The desktop executable built and
+  its X11 window opened. The six YouTube and repository CTest entries passed.
+- The full local CTest run passed 21 of 23 suites. Five cases in
+  `tst_views` and one playlist-order case in `tst_local` also failed on
+  the original fork `main` checkout at `21e6d0e` with the same Qt 6.10.3 and
+  Xvfb setup.
+- Both Windows and Linux passed the six package CI checks and uploaded
+  archives. The Linux archive opened its own bundled Qt window after
+  extraction. The Windows archive includes the executable, its imported
+  Qt Network Authorization DLL and the GPL and brand notices.
+  [Package run](https://github.com/kazaminosuke/swiftify/actions/runs/44527107970)
+- Both platform jobs succeeded again after the attribution rewrite.
+  The final QML adjustment makes the official YouTube wordmark readable
+  on both theme backgrounds. The six local checks and the dark-theme X11
+  startup screenshot were verified again.
+  [Post-rewrite CI](https://github.com/kazaminosuke/swiftify/actions/runs/44528859612)
+- Final source commit `7e76ec4` passed the Windows and Linux package
+  jobs. Both passed all six CI tests and uploaded archives. The final
+  Linux archive started under X11 with its bundled Qt and displayed
+  the corrected attribution wordmark.
+  [Final source CI](https://github.com/kazaminosuke/swiftify/actions/runs/44531388404)
+- The live Google consent flow, authenticated YouTube library reads, and
+  audio playback in the browser still need a real Google Cloud Desktop
+  client and an account. The automated tests use a local OAuth listener,
+  fixture API replies and a browser URL handler.
+
 ## Git identity and draft reviews
 
 Before creating commits in a fresh checkout, use the authenticated
@@ -111,11 +139,17 @@ are under `refs/codex-backup/swiftify-attribution-20261119/`.
 | 2026-11-19 21:43 | Packaging review, official App Server | HTTP 401. No percentage available. |
 | 2026-11-19 21:49 | Draft stack and Linux checks, official App Server | HTTP 401. No percentage available. |
 | 2026-11-19 21:56 | Attribution update, official App Server | HTTP 401. No percentage available. |
+| 2026-11-19 22:03 | Distribution verification, official App Server | HTTP 401. No percentage available. |
+| 2026-11-19 22:10 | Base test comparison, official App Server | HTTP 401. No percentage available. |
+| 2026-11-19 22:13 | Final QML and targeted tests, official App Server | HTTP 401. No percentage available. |
+| 2026-11-19 22:18 | Distribution CI monitoring, official App Server | HTTP 401. No percentage available. |
+| 2026-11-19 22:24 | Linux final package available, official App Server | HTTP 401. No percentage available. |
+| 2026-11-19 22:26 | Final check after Windows and Linux CI, official App Server | HTTP 401. No percentage available. |
 
 The new features use Qt Network and the existing Material 3 QML components.
 The upstream Rust core and playback code remain available through the
 upstream workspace.
 
-Next priorities are the package CI results and a live Google OAuth and API
-test with a configured Google Cloud desktop client. If the project obtains an
+Next is a live Google OAuth, library and browser playback test with a
+configured Google Cloud desktop client and a test account. If the project obtains an
 authorized PCM source, re-evaluate integration with the Rust DSP path.
