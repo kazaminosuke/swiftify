@@ -43,6 +43,38 @@ are separately governed by the YouTube API branding guidelines.
   system browser, with no WebView or Electron. Playback availability,
   ads and sign-in depend on the official service.
 
+## Running the desktop client
+
+Work is being reviewed in stacked draft branches. Build from
+`youtube/desktop-client` or a descendant while the pull requests are open.
+
+1. Build Swiftify using the [README instructions](../README.md#building-from-source).
+   The Qt kit must be 6.10 or newer and include Qt Network Authorization.
+   The Windows and Linux CMake builds enable the YouTube workspace by default.
+2. Run `swiftify` on Linux or `swiftify.exe` on Windows. The search box opens
+   an official YouTube Music search in your browser if the API is unconfigured.
+3. For results inside Swiftify, enable YouTube Data API v3 in your Google
+   Cloud project and provide a YouTube Data API key in the process environment
+   as `SWIFTIFY_YOUTUBE_API_KEY`. Restrict the key to YouTube Data API v3.
+4. For account access, create a Google OAuth **Desktop app** client with YouTube
+   Data API v3 enabled. Configure the consent screen and test users if the app
+   is in testing. Set `SWIFTIFY_GOOGLE_CLIENT_ID` and
+   `SWIFTIFY_GOOGLE_CLIENT_SECRET` in the process environment before launching
+   Swiftify. Sign in in your browser and return to the app. Only read-only
+   YouTube access is requested. Accounts without a YouTube channel can keep
+   using the browser search or a separately configured API key.
+5. To remove account access from the current session, choose **Disconnect
+   Google**. Swiftify clears account data and requests token revocation.
+   The privacy dialog also links to Google's permissions page. Tokens and
+   API results are held in memory, and a new launch requires a new sign-in.
+
+The workspace can read liked videos in YouTube's Music category, owned
+YouTube playlists and their contents. Use **Open on YouTube** to manage a
+playlist on the official site. Availability of a particular result on YouTube
+Music varies. Swiftify never receives PCM audio from browser playback.
+Run `swiftify --spotify` for the upstream workspace and its local playback,
+DSP, equalizer, lyrics and visualizers.
+
 ## Session log (JST)
 
 | Time | Check | Result |
@@ -50,6 +82,13 @@ are separately governed by the YouTube API branding guidelines.
 | 2026-11-19 21:22 | Start, official Codex App Server `account/rateLimits/read` | HTTP 401. Remaining usage and all limit windows unavailable. |
 | 2026-11-19 21:27 | Repository and API review, official App Server stdio and daemon proxy | HTTP 401 through stdio. The daemon control socket was absent. No percentage inferred. |
 | 2026-11-19 21:34 | Data API tests and Google OAuth tests, official App Server | HTTP 401. No percentage available. |
+| 2026-11-19 21:37 | Desktop integration progress, official App Server | HTTP 401. No percentage available. |
+| 2026-11-19 21:43 | Packaging review, official App Server | HTTP 401. No percentage available. |
 
-Next priorities are the Qt Quick shell, Google OAuth and account library,
-then cross-platform package and browser-handoff verification.
+The new features use Qt Network and the existing Material 3 QML components.
+The upstream Rust core and playback code remain available through the
+upstream workspace.
+
+Next priorities are the package CI results and a live Google OAuth and API
+test with a configured Google Cloud desktop client. If the project obtains an
+authorized PCM source, re-evaluate integration with the Rust DSP path.
