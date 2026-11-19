@@ -339,8 +339,9 @@ ApplicationWindow {
             Button {
                 id: brandButton
 
-                implicitWidth: 122
+                implicitWidth: 240
                 implicitHeight: 44
+                padding: 0
                 Accessible.name: qsTr("Developed with YouTube. Open YouTube.")
                 onClicked: window.music.openSource()
                 background: Rectangle {
@@ -348,11 +349,17 @@ ApplicationWindow {
                     color: brandButton.visualFocus || brandButton.hovered
                         ? Appearance.colors.surfaceContainerHigh : "transparent"
                 }
-                contentItem: Image {
-                    source: Theme.dark
-                        ? "qrc:/qt/qml/Swiftify/resources/youtube/developed-with-youtube-dark.png"
-                        : "qrc:/qt/qml/Swiftify/resources/youtube/developed-with-youtube-light.png"
-                    fillMode: Image.PreserveAspectFit
+                contentItem: Item {
+                    Image {
+                        anchors.centerIn: parent
+                        width: parent.width
+                        // Scale the original 700x250 asset with its transparent margin.
+                        height: width * 250 / 700
+                        source: Theme.dark
+                            ? "qrc:/qt/qml/Swiftify/resources/youtube/developed-with-youtube-light.png"
+                            : "qrc:/qt/qml/Swiftify/resources/youtube/developed-with-youtube-dark.png"
+                        fillMode: Image.PreserveAspectFit
+                    }
                 }
             }
 
