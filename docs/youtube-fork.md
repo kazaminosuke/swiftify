@@ -91,9 +91,14 @@ global Git address. That address was absent from the authenticated GitHub
 account's registered emails. GitHub returned no linked author or committer
 for those commits. A history rewrite would change commit IDs across the
 stack, whose bases are `main` → `youtube/data-api` → `youtube/google-oauth`
-→ `youtube/desktop-client` → `youtube/package-ci`. The existing commit IDs
-and review branches were preserved. New development commits use the verified
-noreply identity and may use a `Generated-by: OpenAI Codex` trailer.
+→ `youtube/desktop-client` → `youtube/package-ci`. With the fork owner's
+authorization, the four feature branches were updated atomically with
+`--force-with-lease` after comparing each old commit tree and its parent
+topology. All 13 replacement commits use the verified noreply identity for
+both Author and Committer and carry a `Generated-by: OpenAI Codex` trailer.
+GitHub confirmed both associations for every replacement commit. The four
+existing draft PRs and the fork's `main` were preserved. Local recovery refs
+are under `refs/codex-backup/swiftify-attribution-20261119/`.
 
 ## Session log (JST)
 
@@ -105,6 +110,7 @@ noreply identity and may use a `Generated-by: OpenAI Codex` trailer.
 | 2026-11-19 21:37 | Desktop integration progress, official App Server | HTTP 401. No percentage available. |
 | 2026-11-19 21:43 | Packaging review, official App Server | HTTP 401. No percentage available. |
 | 2026-11-19 21:49 | Draft stack and Linux checks, official App Server | HTTP 401. No percentage available. |
+| 2026-11-19 21:56 | Attribution update, official App Server | HTTP 401. No percentage available. |
 
 The new features use Qt Network and the existing Material 3 QML components.
 The upstream Rust core and playback code remain available through the
