@@ -97,6 +97,7 @@ Item parseItem(Collection collection, const QJsonObject &object)
         result.channel = string(QLatin1StringView("videoOwnerChannelTitle"));
         break;
     case Collection::Playlists:
+    case Collection::Channel:
         break;
     }
     return result;
@@ -135,6 +136,10 @@ QNetworkReply *Api::fetch(Collection collection, const QString &value, const QSt
         path = QStringLiteral("playlists");
         query.addQueryItem(QStringLiteral("mine"), QStringLiteral("true"));
         break;
+    case Collection::Channel:
+        path = QStringLiteral("channels");
+        query.addQueryItem(QStringLiteral("mine"), QStringLiteral("true"));
+        break;
     case Collection::PlaylistItems:
         path = QStringLiteral("playlistItems");
         query.addQueryItem(QStringLiteral("playlistId"), QString::fromLatin1(QUrl::toPercentEncoding(value)));
@@ -171,7 +176,8 @@ Page Api::read(QNetworkReply &reply, Collection collection)
     page.nextPage = response.value(QStringLiteral("nextPageToken")).toString();
     for (const QJsonValue entry : items.toArray()) {
         Item item = parseItem(collection, entry.toObject());
-        const bool validId = collection == Collection::Playlists ? validPlaylistId(item.id) : validVideoId(item.id);
+        const bool namedCollection = collection == Collection::Playlists || collection == Collection::Channel;
+        const bool validId = namedCollection ? validPlaylistId(item.id) : validVideoId(item.id);
         if (validId && !item.title.isEmpty()) {
             page.items.append(std::move(item));
         }
