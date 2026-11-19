@@ -149,6 +149,7 @@ if [[ -z "$QT" ]]; then
                 "qt.qt6.${QT_NODOT}.win64_mingw":MinGW-w64-* | \
                 "qt.qt6.${QT_NODOT}.addons.qtshadertools.win64_mingw":qtshadertools-* | \
                 "qt.qt6.${QT_NODOT}.addons.qtwebsockets.win64_mingw":qtwebsockets-* | \
+                "qt.qt6.${QT_NODOT}.addons.qtnetworkauth.win64_mingw":qtnetworkauth-* | \
                 "qt.qt6.${QT_NODOT}.addons.qtimageformats.win64_mingw":qtimageformats-*)
                     dest="$WORK/qt/archives/${ver}${archive}"
                     if [[ ! -f "$dest" ]]; then
