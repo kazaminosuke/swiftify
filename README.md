@@ -241,7 +241,7 @@ bind = , XF86AudioPlay, exec, swiftify --play-pause
 
 ## building from source
 
-- Qt 6.10 or newer with Qt Base, Qt Declarative, Qt Shader Tools and Qt WebSockets
+- Qt 6.10 or newer with Qt Base, Qt Declarative, Qt Shader Tools and Qt WebSockets (plus Qt Network Authorization for the YouTube client)
 - QtKeychain and QCoro 0.10 or newer, both built for Qt 6
 - CMake 3.24 or newer, Ninja, and a C++20 compiler
 - Rust (stable, from [rustup](https://rustup.rs))
@@ -346,7 +346,7 @@ the tray. `-DSWIFTIFY_DESKTOP_INTEGRATION=OFF` turns those off.
 
 install these
 
-- **Qt 6.10** with *Qt Shader Tools* and *Qt WebSockets*, **CMake** and **Ninja** from the **Qt online Installer**
+- **Qt 6.10** with *Qt Shader Tools*, *Qt WebSockets* and *Qt Network Authorization*, **CMake** and **Ninja** from the **Qt online Installer**
 - **Rust** from [rustup](https://rustup.rs)
 - **git** from [git-scm.com](https://git-scm.com/install/)
 
