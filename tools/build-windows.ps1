@@ -178,7 +178,7 @@ function Invoke-WindowsBuild {
     }
     foreach ($module in @('Qt6Core', 'Qt6Widgets', 'Qt6Quick', 'Qt6QuickControls2', 'Qt6ShaderTools', 'Qt6WebSockets', 'Qt6NetworkAuth')) {
         if (-not (Test-Path -LiteralPath "$QtPath\lib\cmake\$module\${module}Config.cmake")) {
-            throw "The selected Qt kit is missing $module. Install Qt Base, Qt Declarative, Qt Shader Tools and Qt WebSockets with the Qt installer."
+            throw "The selected Qt kit is missing $module. Install Qt Base, Qt Declarative, Qt Shader Tools, Qt WebSockets and Qt Network Authorization with the Qt installer."
         }
     }
     $qtTools = Join-Path (Split-Path -Parent (Split-Path -Parent $QtPath)) 'Tools'
