@@ -90,6 +90,7 @@ void YouTubeApiTest::authorizedCollectionsUseExpectedEndpoints()
     for (const auto [collection, path, key, value] :
          {std::tuple{Collection::Likes, "videos", "myRating", "like"},
           std::tuple{Collection::Playlists, "playlists", "mine", "true"},
+          std::tuple{Collection::Channel, "channels", "mine", "true"},
           std::tuple{Collection::PlaylistItems, "playlistItems", "playlistId", "PL_123"}}) {
         const std::unique_ptr<QNetworkReply> reply(api.fetch(collection, QStringLiteral("PL_123"),
                                                             {}, "test-token", "test-key"));

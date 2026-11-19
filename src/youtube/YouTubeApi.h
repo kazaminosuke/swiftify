@@ -11,7 +11,7 @@ class QNetworkReply;
 
 namespace swiftify::youtube {
 
-enum class Collection { Search, Likes, Playlists, PlaylistItems };
+enum class Collection { Search, Likes, Playlists, PlaylistItems, Channel };
 
 struct Item {
     QString id;
