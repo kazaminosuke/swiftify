@@ -75,6 +75,26 @@ Music varies. Swiftify never receives PCM audio from browser playback.
 Run `swiftify --spotify` for the upstream workspace and its local playback,
 DSP, equalizer, lyrics and visualizers.
 
+## Git identity and draft reviews
+
+Before creating commits in a fresh checkout, use the authenticated
+`kazaminosuke` account and verify its GitHub-provided noreply address.
+Set `user.name`, `user.email` and `user.useConfigOnly` with
+`git config --local`. Check the effective Author and Committer with
+`git var GIT_AUTHOR_IDENT` and `git var GIT_COMMITTER_IDENT`. Linked
+worktrees use the same repository-local configuration. GitHub CLI
+authentication and Git commit identity are configured independently.
+See [GitHub's commit email reference](https://docs.github.com/en/account-and-profile/reference/email-addresses-reference).
+
+The first ten development commits in the four draft PRs used the previous
+global Git address. That address was absent from the authenticated GitHub
+account's registered emails. GitHub returned no linked author or committer
+for those commits. A history rewrite would change commit IDs across the
+stack, whose bases are `main` → `youtube/data-api` → `youtube/google-oauth`
+→ `youtube/desktop-client` → `youtube/package-ci`. The existing commit IDs
+and review branches were preserved. New development commits use the verified
+noreply identity and may use a `Generated-by: OpenAI Codex` trailer.
+
 ## Session log (JST)
 
 | Time | Check | Result |
@@ -84,6 +104,7 @@ DSP, equalizer, lyrics and visualizers.
 | 2026-11-19 21:34 | Data API tests and Google OAuth tests, official App Server | HTTP 401. No percentage available. |
 | 2026-11-19 21:37 | Desktop integration progress, official App Server | HTTP 401. No percentage available. |
 | 2026-11-19 21:43 | Packaging review, official App Server | HTTP 401. No percentage available. |
+| 2026-11-19 21:49 | Draft stack and Linux checks, official App Server | HTTP 401. No percentage available. |
 
 The new features use Qt Network and the existing Material 3 QML components.
 The upstream Rust core and playback code remain available through the
