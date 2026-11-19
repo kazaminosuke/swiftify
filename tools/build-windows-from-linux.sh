@@ -290,7 +290,7 @@ done
 
 [[ -f "$STAGE/share/licenses/swiftify/LICENSE" ]] || fail "the license is missing"
 for license in material-color-utilities.LICENSE rounded-polygon-qmljs.LICENSE material-symbols.LICENSE \
-    rust-crates.LICENSE qt.LICENSE qt.NOTICE qtkeychain.LICENSE qcoro.LICENSE; do
+    rust-crates.LICENSE qt.LICENSE qt.NOTICE qtkeychain.LICENSE qcoro.LICENSE YouTubeBrand.NOTICE; do
     [[ -f "$STAGE/share/licenses/swiftify/$license" ]] || fail "$license is missing"
 done
 
