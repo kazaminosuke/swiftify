@@ -242,7 +242,7 @@ file(GLOB_RECURSE SWIFTIFY_SOURCES CONFIGURE_DEPENDS RELATIVE ${CMAKE_CURRENT_SO
     src/*.cpp src/*.h src/*.mm)
 list(REMOVE_ITEM SWIFTIFY_SOURCES src/main.cpp)
 if(NOT SWIFTIFY_YOUTUBE_CLIENT)
-    list(FILTER SWIFTIFY_SOURCES EXCLUDE REGEX "^src/youtube/GoogleAuthorization")
+    list(FILTER SWIFTIFY_SOURCES EXCLUDE REGEX "^src/youtube/(GoogleAuthorization|YouTubeController)")
 endif()
 if(NOT APPLE)
     list(FILTER SWIFTIFY_SOURCES EXCLUDE REGEX "^src/system/macos/")
@@ -271,6 +271,16 @@ endif()
 
 file(GLOB_RECURSE SWIFTIFY_QML CONFIGURE_DEPENDS RELATIVE ${CMAKE_CURRENT_SOURCE_DIR}
     qml/*.qml)
+set(SWIFTIFY_QML_RESOURCES resources/swiftify-icon.png resources/cameo.png)
+if(SWIFTIFY_YOUTUBE_CLIENT)
+    list(APPEND SWIFTIFY_QML_RESOURCES
+        resources/youtube/developed-with-youtube-dark.png
+        resources/youtube/developed-with-youtube-light.png)
+    install(FILES resources/youtube/NOTICE.md
+        DESTINATION ${CMAKE_INSTALL_DATADIR}/licenses/swiftify RENAME YouTubeBrand.NOTICE)
+else()
+    list(REMOVE_ITEM SWIFTIFY_QML qml/YouTubeWindow.qml)
+endif()
 file(GLOB SWIFTIFY_SINGLETONS CONFIGURE_DEPENDS RELATIVE ${CMAKE_CURRENT_SOURCE_DIR}
     qml/design/*.qml)
 set_source_files_properties(${SWIFTIFY_SINGLETONS} PROPERTIES QT_QML_SINGLETON_TYPE TRUE)
@@ -288,7 +298,7 @@ qt_add_qml_module(swiftify_app
     VERSION 1.0
     SOURCES ${SWIFTIFY_SOURCES}
     QML_FILES ${SWIFTIFY_QML}
-    RESOURCES resources/swiftify-icon.png resources/cameo.png
+    RESOURCES ${SWIFTIFY_QML_RESOURCES}
     DEPENDENCIES QtQuick)
 # BATCHABLE: the spectrum's material can be merged into the scene graph's
 # batches, which needs the extra vertex input qsb adds for it.
@@ -355,7 +365,7 @@ if(TARGET Qt6::DBus)
     target_link_libraries(swiftify_app PUBLIC Qt6::DBus)
 endif()
 if(SWIFTIFY_YOUTUBE_CLIENT)
-    target_link_libraries(swiftify_app PUBLIC Qt6::NetworkAuth)
+    target_link_libraries(swiftify_app PRIVATE Qt6::NetworkAuth)
 endif()
 if(SWIFTIFY_SOLOIST)
     target_link_libraries(swiftify_app PUBLIC Qt6::WebSockets)
@@ -415,6 +425,7 @@ if(WIN32)
 endif()
 
 qt_add_executable(swiftify src/main.cpp)
+target_compile_definitions(swiftify PRIVATE $<$<BOOL:${SWIFTIFY_YOUTUBE_CLIENT}>:SWIFTIFY_HAS_YOUTUBE_CLIENT>)
 target_link_libraries(swiftify PRIVATE swiftify_app swiftify_appplugin)
 if(SWIFTIFY_IS_LINUX)
     target_link_libraries(swiftify PRIVATE Qt6::Widgets)
