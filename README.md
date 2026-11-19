@@ -293,7 +293,7 @@ or use cmake
 
 ```sh
 # replace with your package manager if not on arch
-sudo pacman -S --needed git qt6-base qt6-declarative qt6-shadertools qt6-wayland qt6-websockets qtkeychain-qt6 qcoro libpulse alsa-lib openssl cmake ninja rust pkgconf
+sudo pacman -S --needed git qt6-base qt6-declarative qt6-shadertools qt6-wayland qt6-websockets qt6-networkauth qtkeychain-qt6 qcoro libpulse alsa-lib openssl cmake ninja rust pkgconf
 
 git clone https://github.com/swiftify-org/swiftify.git
 cd swiftify
@@ -307,7 +307,7 @@ compatibility patches automatically
 
 ```sh
 sudo apt-get install git qt6-base-dev qt6-declarative-dev qt6-shader-baker \
-    qt6-shadertools-dev qt6-wayland qt6-websockets-dev qtkeychain-qt6-dev qcoro-qt6-dev \
+    qt6-shadertools-dev qt6-wayland qt6-websockets-dev qt6-networkauth-dev qtkeychain-qt6-dev qcoro-qt6-dev \
     libpulse-dev libasound2-dev libssl-dev cmake ninja-build pkg-config
 # install rust from https://rustup.rs if you dont have it
 
