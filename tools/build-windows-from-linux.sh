@@ -125,7 +125,8 @@ fi
 if [[ -z "$QT" ]]; then
     QT_NODOT="${HOST_QT_VERSION//./}"
     QT="$WORK/qt"
-    if [[ ! -f "$QT/lib/cmake/Qt6Core/Qt6CoreConfig.cmake" ]]; then
+    if [[ ! -f "$QT/lib/cmake/Qt6Core/Qt6CoreConfig.cmake" \
+        || ! -f "$QT/lib/cmake/Qt6NetworkAuth/Qt6NetworkAuthConfig.cmake" ]]; then
         echo "downloading Windows Qt $HOST_QT_VERSION (mingw_64) into $QT..."
         mkdir -p "$WORK/qt/archives" "$QT"
         BASE_URL=""
