@@ -93,6 +93,10 @@ DSP, equalizer, lyrics and visualizers.
   on both theme backgrounds. The six local checks and the dark-theme X11
   startup screenshot were verified again.
   [Post-rewrite CI](https://github.com/kazaminosuke/swiftify/actions/runs/44528859612)
+- Final source commit `7e76ec4` passed the Windows and Linux package
+  jobs. Both passed all six CI tests and uploaded archives. The final
+  Linux archive started under X11 with its bundled Qt and displayed
+  the corrected attribution wordmark.
   [Final source CI](https://github.com/kazaminosuke/swiftify/actions/runs/44531388404)
 - The live Google consent flow, authenticated YouTube library reads, and
   audio playback in the browser still need a real Google Cloud Desktop
@@ -139,11 +143,13 @@ are under `refs/codex-backup/swiftify-attribution-20261119/`.
 | 2026-11-19 22:10 | Base test comparison, official App Server | HTTP 401. No percentage available. |
 | 2026-11-19 22:13 | Final QML and targeted tests, official App Server | HTTP 401. No percentage available. |
 | 2026-11-19 22:18 | Distribution CI monitoring, official App Server | HTTP 401. No percentage available. |
+| 2026-11-19 22:24 | Linux final package available, official App Server | HTTP 401. No percentage available. |
+| 2026-11-19 22:26 | Final check after Windows and Linux CI, official App Server | HTTP 401. No percentage available. |
 
 The new features use Qt Network and the existing Material 3 QML components.
 The upstream Rust core and playback code remain available through the
 upstream workspace.
 
-Next priorities are the package CI results and a live Google OAuth and API
-test with a configured Google Cloud desktop client. If the project obtains an
+Next is a live Google OAuth, library and browser playback test with a
+configured Google Cloud desktop client and a test account. If the project obtains an
 authorized PCM source, re-evaluate integration with the Rust DSP path.
