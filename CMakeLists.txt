@@ -224,6 +224,10 @@ endif()
 # with them. a distro's package uses the system's and leaves them off
 option(SWIFTIFY_BUNDLED_QT "Install the licences of Qt, QtKeychain and QCoro, for a build that bundles them" OFF)
 if(SWIFTIFY_BUNDLED_QT)
+    if(SWIFTIFY_YOUTUBE_CLIENT)
+        set(SWIFTIFY_QT_NETWORKAUTH_NOTICE
+            "Qt Network Authorization is distributed under the GNU General Public License version 3. See LICENSE. Its source is in the Qt source archive linked above.")
+    endif()
     configure_file(packaging/licenses/qt.NOTICE.in ${SWIFTIFY_LICENSE_DIRECTORY}/qt.NOTICE @ONLY)
     list(APPEND SWIFTIFY_THIRD_PARTY_LICENSES
         ${CMAKE_CURRENT_SOURCE_DIR}/packaging/licenses/qt.LICENSE

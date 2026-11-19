@@ -117,7 +117,10 @@ apply_compat_patches() {
 }
 
 # Check if patches are needed
+YOUTUBE_CLIENT=ON
 if [[ "$QT_MAJOR" -eq 6 ]] && [[ "$QT_MINOR" -lt 10 ]]; then
+    YOUTUBE_CLIENT=OFF
+    warn "The YouTube client requires Qt 6.10 or newer. Building the upstream mode on Qt $QT_VERSION."
     warn "Qt $QT_VERSION detected (< 6.10). Applying compatibility patches..."
     apply_compat_patches
 elif [[ "$QT_MAJOR" -lt 6 ]]; then
@@ -138,6 +141,7 @@ log "Configuring build..."
 cmake -S . -B build -G Ninja \
     -DCMAKE_BUILD_TYPE=Release \
     -DBUILD_TESTING=OFF \
+    -DSWIFTIFY_YOUTUBE_CLIENT="$YOUTUBE_CLIENT" \
     -DCMAKE_INSTALL_PREFIX="$PREFIX"
 
 # Build
