@@ -9,6 +9,7 @@
 #include <QOAuth2AuthorizationCodeFlow>
 #include <QOAuthHttpServerReplyHandler>
 
+#include <atomic>
 #include <utility>
 
 namespace swiftify::youtube {
@@ -17,11 +18,23 @@ namespace {
 
 const QByteArray readOnlyScope("https://www.googleapis.com/auth/youtube.readonly");
 
+std::atomic<QLoggingCategory::CategoryFilter> previousLogFilter = nullptr;
+
+void filterAuthorizationLogs(QLoggingCategory *category)
+{
+    if (const auto filter = previousLogFilter.load()) filter(category);
+    if (!QByteArrayView(category->categoryName()).startsWith("qt.networkauth.")) return;
+
+    // Qt can log callback URLs and provider error bodies, even at warning level.
+    for (const auto type : {QtDebugMsg, QtInfoMsg, QtWarningMsg, QtCriticalMsg}) {
+        category->setEnabled(type, false);
+    }
+}
+
 void protectAuthorizationLogs()
 {
-    // Qt's reply handler can otherwise log rejected callback URLs and provider error bodies.
     static const bool installed = [] {
-        QLoggingCategory::setFilterRules(QStringLiteral("qt.networkauth.*=false"));
+        previousLogFilter.store(QLoggingCategory::installFilter(filterAuthorizationLogs));
         return true;
     }();
     Q_UNUSED(installed);
