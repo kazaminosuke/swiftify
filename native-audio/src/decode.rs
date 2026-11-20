@@ -111,6 +111,15 @@ impl OpusSource {
         let duration = track
             .duration
             .and_then(|d| time_base.calc_duration(d))
+            .or_else(|| {
+                // WebM puts the playback duration on the Segment, not on
+                // its track. Use it when there is only one media track.
+                if format.tracks().len() != 1 {
+                    return None;
+                }
+                let media = format.media_info();
+                media.time_base?.calc_duration(media.duration?)
+            })
             .and_then(|time| Duration::try_from_secs_f64(time.as_secs_f64()).ok());
         let mut source = Self {
             track: track.id,
