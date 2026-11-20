@@ -23,8 +23,9 @@ history, recommendations and playlist writes are outstanding.
 ## Verification
 
 - Linux and Windows engine CI passed for Opus and the seekable provider. The
-  output selection stage also passed its initial two-platform CI and the ALSA
-  reopen test. The update below brings in the single-track WebM duration fix.
+  output selection stage passed the same matrix and the ALSA reopen test.
+  The final Linux Spotify core release suite reported 74 passes and one
+  opt-in benchmark ignored.
   [Opus CI](https://github.com/kazaminosuke/swiftify/actions/runs/44718711652)
   [Provider CI](https://github.com/kazaminosuke/swiftify/actions/runs/44718801085)
   [Output selection CI](https://github.com/kazaminosuke/swiftify/actions/runs/44718850140)
@@ -91,6 +92,7 @@ were imported from the reviewed projects.
 | 19:18 | Output device tests | HTTP 401 |
 | 19:23 | Integrated verification | HTTP 401 |
 | 19:27 | Closing verification and handoff | HTTP 401 |
+| 19:30 | Final CI and core regression results | HTTP 401 |
 
 The official `account/rateLimits/read` check did not return an available
 percentage. Authentication failure was not treated as a quota reading.
