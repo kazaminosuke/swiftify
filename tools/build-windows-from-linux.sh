@@ -125,7 +125,8 @@ fi
 if [[ -z "$QT" ]]; then
     QT_NODOT="${HOST_QT_VERSION//./}"
     QT="$WORK/qt"
-    if [[ ! -f "$QT/lib/cmake/Qt6Core/Qt6CoreConfig.cmake" ]]; then
+    if [[ ! -f "$QT/lib/cmake/Qt6Core/Qt6CoreConfig.cmake" \
+        || ! -f "$QT/lib/cmake/Qt6NetworkAuth/Qt6NetworkAuthConfig.cmake" ]]; then
         echo "downloading Windows Qt $HOST_QT_VERSION (mingw_64) into $QT..."
         mkdir -p "$WORK/qt/archives" "$QT"
         BASE_URL=""
@@ -149,6 +150,7 @@ if [[ -z "$QT" ]]; then
                 "qt.qt6.${QT_NODOT}.win64_mingw":MinGW-w64-* | \
                 "qt.qt6.${QT_NODOT}.addons.qtshadertools.win64_mingw":qtshadertools-* | \
                 "qt.qt6.${QT_NODOT}.addons.qtwebsockets.win64_mingw":qtwebsockets-* | \
+                "qt.qt6.${QT_NODOT}.addons.qtnetworkauth.win64_mingw":qtnetworkauth-* | \
                 "qt.qt6.${QT_NODOT}.addons.qtimageformats.win64_mingw":qtimageformats-*)
                     dest="$WORK/qt/archives/${ver}${archive}"
                     if [[ ! -f "$dest" ]]; then
