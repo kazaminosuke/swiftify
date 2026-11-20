@@ -46,7 +46,7 @@ struct Lyrics {
     static std::optional<Lyrics> besideFile(const QString &musicPath);
     /// the line playing at `positionMs`, by binary search. -1 before the first
     /// line, and always for unsynchronised lyrics.
-    int lineIndex(quint32 positionMs) const;
+    int lineIndex(qint64 positionMs) const;
 };
 
 class LyricsModel : public QAbstractListModel {

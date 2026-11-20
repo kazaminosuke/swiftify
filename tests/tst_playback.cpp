@@ -659,6 +659,24 @@ private slots:
         QCOMPARE(sleepFadeLevel(SleepFade::Entire, 0, 60), 0.0);
     }
 
+    void lrcOffsetsApplyToEveryCue()
+    {
+        const auto advanced = Lyrics::fromLrc(QStringLiteral("\ufeff[00:00.20]one\n[00:01.00][00:03.00]two\n[OFFSET: +400]\n"));
+        QVERIFY(advanced);
+        QVERIFY(advanced->synchronized);
+        QCOMPARE(advanced->lines.size(), 3);
+        QCOMPARE(advanced->lines[0].startTimeMs, 0u);
+        QCOMPARE(advanced->lines[1].startTimeMs, 600u);
+        QCOMPARE(advanced->lines[1].endTimeMs, 2600u);
+        QCOMPARE(advanced->lineIndex(-1), -1);
+        QCOMPARE(advanced->lineIndex(600), 1);
+
+        const auto delayed = Lyrics::fromLrc(QStringLiteral("[offset:-500]\n[00:00.10]one"));
+        QVERIFY(delayed);
+        QCOMPARE(delayed->lineIndex(599), -1);
+        QCOMPARE(delayed->lineIndex(600), 0);
+    }
+
     void lyricsFollowThePosition()
     {
         Rig rig;
@@ -677,6 +695,13 @@ private slots:
         rig.core.duration = 200'000;
         rig.core.position = 5'500;
         QTRY_COMPARE_WITH_TIMEOUT(rig.player.activeLyricIndex(), 1, 2000);
+        rig.player.setLyricsDelayMs(1000);
+        QCOMPARE(rig.player.activeLyricIndex(), 0);
+        QCOMPARE(rig.settings.value(QStringLiteral("lyricsDelayMs")).toInt(), 1000);
+        rig.player.seekToLyricLine(1);
+        QCOMPARE(rig.core.position, 6000u);
+        QCOMPARE(rig.player.activeLyricIndex(), 1);
+
     }
 
     void missingLyricsShowThePhrase()
