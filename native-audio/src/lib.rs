@@ -8,6 +8,9 @@ pub mod device;
 #[cfg(feature = "file-codecs")]
 pub mod decode;
 
+#[cfg(feature = "file-codecs")]
+pub mod media;
+
 #[cfg(feature = "player")]
 mod player;
 
