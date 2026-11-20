@@ -72,10 +72,17 @@ open-source implementations, their licenses and service constraints.
   generated Opus/WebM sample.
 - The existing Spotify core's release suite passed locally with 74 tests and
   one opt-in benchmark ignored. The engine passed Clippy with warnings denied.
+- The full Linux CMake Release target linked with Qt 6.10.3 and the shared
+  Rust output adapter. The existing app stayed up in an eight-second
+  offscreen launch with an isolated configuration. The headless session
+  lacked a Secret Service backend, so saved-account login was untested.
 - Linux and Windows CI passed the native engine, existing output and C ABI
   tests. Linux CI also ran the ALSA device test. Physical audio output on
   Windows and Linux remains unverified.
-  [Linux and Windows CI](https://github.com/kazaminosuke/swiftify/actions/runs/44709909645)
+  [Linux and Windows CI](https://github.com/kazaminosuke/swiftify/actions/runs/44710839621)
+- A separate libmpv probe decoded and sought in AAC/MP4 and Opus/WebM samples.
+  The playback path for that probe and its verification limits are in the
+  [source comparison](youtube-music-client-comparison.md#independent-native-playback-probe).
 
 ## Codex usage checks (JST)
 
@@ -85,3 +92,5 @@ open-source implementations, their licenses and service constraints.
 | 2026-11-20 18:13 | Native engine tests, official App Server | HTTP 401. No percentage inferred. |
 | 2026-11-20 18:19 | Source review and timeline work, official App Server | HTTP 401. No percentage inferred. |
 | 2026-11-20 18:24 | Source comparison and CI verification, official App Server | HTTP 401. No percentage inferred. |
+| 2026-11-20 18:30 | Local codec comparison and Windows/Linux CI, official App Server | HTTP 401. No percentage inferred. |
+| 2026-11-20 18:35 | Final check after the Linux Qt build, official App Server | HTTP 401. No percentage inferred. |
