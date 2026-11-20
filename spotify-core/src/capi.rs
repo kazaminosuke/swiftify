@@ -716,17 +716,28 @@ pub unsafe extern "C" fn swiftify_equalizer_frequencies(out: *mut f32, capacity:
 
 #[cfg(test)]
 mod tests {
-    use std::{io::Read, time::Duration};
+    #[cfg(unix)]
+    use std::io::Read;
+    use std::time::Duration;
 
     use super::*;
 
     fn wait_for_completion(core: *const SwiftifyCore) -> (u64, bool, String) {
         let fd = unsafe { swiftify_core_completion_fd(core) };
-        assert!(fd >= 0);
-        let reader = unsafe { &(&*core).completions.receiver };
+        #[cfg(unix)]
+        let mut reader = {
+            assert!(fd >= 0);
+            unsafe { &(&*core).completions.receiver }
+        };
+        #[cfg(not(unix))]
+        assert_eq!(fd, -1);
+
         for _ in 0..200 {
-            let mut byte = [0; 16];
-            let _ = (&*reader).read(&mut byte);
+            #[cfg(unix)]
+            {
+                let mut byte = [0; 16];
+                let _ = reader.read(&mut byte);
+            }
             let mut request_id = 0;
             let mut ok = true;
             let mut payload = ptr::null_mut();

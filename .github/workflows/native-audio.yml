@@ -9,6 +9,7 @@ on:
       - spotify-core/Cargo.toml
       - spotify-core/Cargo.lock
       - spotify-core/src/output.rs
+      - spotify-core/src/capi.rs
 
 permissions:
   contents: read
@@ -46,3 +47,6 @@ jobs:
 
       - name: Test the existing Swiftify output path
         run: cargo +stable test --locked --manifest-path spotify-core/Cargo.toml --no-default-features --features capi --lib output::tests
+
+      - name: Check core completion tests on the runner platform
+        run: cargo +stable test --locked --manifest-path spotify-core/Cargo.toml --no-default-features --features capi --lib capi::tests
