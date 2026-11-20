@@ -47,7 +47,7 @@ use symphonia::core::{
 
 /// the file extensions the decoder plays
 pub const AUDIO_EXTENSIONS: &[&str] = &[
-    "mp3", "flac", "ogg", "oga", "m4a", "mp4", "aac", "alac", "wav", "aif", "aiff",
+    "mp3", "flac", "ogg", "oga", "opus", "webm", "mka", "m4a", "mp4", "aac", "alac", "wav", "aif", "aiff",
 ];
 
 /// the names a cover kept beside the files of an album goes by
@@ -266,7 +266,17 @@ fn open(path: &Path) -> Result<symphonia::core::probe::ProbeResult, String> {
 /// the tags of the file at `path`, with an embedded cover written into
 /// `artwork_dir` when there is one
 pub fn read_tags(path: &Path, artwork_dir: Option<&Path>) -> Result<LocalTags, String> {
-    let mut probed = open(path)?;
+    let mut probed = match open(path) {
+        Ok(probed) => probed,
+        Err(error) => {
+            let decoder = swiftify_native_audio::decode::open_file(path).map_err(|_| error)?;
+            return Ok(LocalTags {
+                duration_ms: decoder.total_duration().map_or(0, |duration| duration.as_millis() as u64),
+                artwork_path: folder_cover(path).map(|cover| cover.to_string_lossy().into_owned()),
+                ..Default::default()
+            });
+        }
+    };
     let mut tags = LocalTags::default();
 
     // the container's own tags first (vorbis comments, mp4 atoms), then
