@@ -24,6 +24,7 @@
 #include <swiftify_core.h>
 
 #include <QCollator>
+#include <QLocale>
 #include <QDir>
 #include <QDirIterator>
 #include <QFileInfo>
@@ -81,6 +82,16 @@ QJsonObject readTags(const QString &path, const QString &artworkDirectory)
 QString text(const QJsonObject &tags, const char *key)
 {
     return tags.value(QLatin1StringView(key)).toString().trimmed();
+}
+
+QCollator musicCollator()
+{
+    // Qt ignores numeric collation in the C locale.
+    const QLocale locale;
+    QCollator collator(locale.language() == QLocale::C ? QLocale(QLocale::English) : locale);
+    collator.setNumericMode(true);
+    collator.setCaseSensitivity(Qt::CaseInsensitive);
+    return collator;
 }
 
 /// a folder's own path, not a file or folder inside one already added
@@ -236,6 +247,11 @@ void LocalLibrary::rescan()
                       m_cachePath)
         .then(this, [this, generation](const ScanResult &result) {
             if (generation != m_scanGeneration) {
+                // A playlist acquired new copies while this scan was in
+                // flight. Refresh the snapshot before publishing it.
+                m_rescanQueued = false;
+                setScanning(false);
+                rescan();
                 return;
             }
             m_entries = result.entries;
@@ -354,9 +370,7 @@ QList<Song> LocalLibrary::songsFrom(const QHash<QString, Entry> &entries)
     }
 
     // by artist and album, then in the album's own order
-    QCollator collator;
-    collator.setNumericMode(true);
-    collator.setCaseSensitivity(Qt::CaseInsensitive);
+    const QCollator collator = musicCollator();
     std::sort(found.begin(), found.end(), [&](const Found &a, const Found &b) {
         if (const int artist = collator.compare(a.albumArtist, b.albumArtist); artist != 0) {
             return artist < 0;
@@ -877,9 +891,7 @@ LocalLibrary::KeepResult LocalLibrary::keep(const QStringList &inputs, const QSt
     KeepResult result;
 
     // a folder gives its music files, in the order of their names
-    QCollator collator;
-    collator.setNumericMode(true);
-    collator.setCaseSensitivity(Qt::CaseInsensitive);
+    const QCollator collator = musicCollator();
     QStringList paths;
     for (const QString &input : inputs) {
         const QFileInfo info(input);
@@ -1016,6 +1028,10 @@ void LocalLibrary::keepNext()
 
 void LocalLibrary::finishKeeping(const QString &id, const KeepResult &result)
 {
+    if (m_scanning && std::any_of(result.kept.cbegin(), result.kept.cend(),
+                                  [](const Kept &kept) { return kept.copied; })) {
+        ++m_scanGeneration;
+    }
     adoptKept(result);
     if (id.isEmpty()) {
         // each in its place
