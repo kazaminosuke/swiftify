@@ -3,9 +3,7 @@
 use std::{
     collections::VecDeque,
     error::Error,
-    fmt,
-    fs::{self, File},
-    io::{self, BufReader},
+    fmt, io,
     path::{Path, PathBuf},
     sync::{
         Arc, Condvar, Mutex, MutexGuard, PoisonError,
@@ -16,18 +14,16 @@ use std::{
 };
 
 use rodio::{
-    Decoder, Source,
+    Source,
     cpal::{self, traits::StreamTrait},
     source::UniformSourceIterator,
 };
 
-use crate::device::open_stereo_stream;
+use crate::{decode::open_file, device::open_stereo_stream};
 
 const CHANNELS: usize = 2;
 const DECODE_SAMPLES: usize = 2_048;
 const CLOCK_SPANS: usize = 64;
-
-type FileDecoder = Decoder<BufReader<File>>;
 
 /// Engine states reported by [Player::snapshot].
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -304,7 +300,7 @@ struct Track {
 
 impl Track {
     fn open(path: &Path, rate: u32, offset: Duration) -> Result<Self, AudioError> {
-        let mut decoder = open_decoder(path)?;
+        let mut decoder = open_file(path).map_err(AudioError::Decode)?;
         let duration = decoder.total_duration();
         if !offset.is_zero() {
             decoder.try_seek(offset).map_err(AudioError::Seek)?;
@@ -337,26 +333,6 @@ impl Drop for Track {
             let _ = decoder.join();
         }
     }
-}
-
-fn open_decoder(path: &Path) -> Result<FileDecoder, AudioError> {
-    let metadata = fs::metadata(path).map_err(AudioError::File)?;
-    if !metadata.is_file() {
-        return Err(AudioError::File(io::Error::new(
-            io::ErrorKind::InvalidInput,
-            "expected a regular file",
-        )));
-    }
-    let file = File::open(path).map_err(AudioError::File)?;
-    let length = file.metadata().map_err(AudioError::File)?.len();
-    let mut builder = Decoder::builder()
-        .with_data(BufReader::new(file))
-        .with_seekable(true)
-        .with_byte_len(length);
-    if let Some(extension) = path.extension().and_then(|extension| extension.to_str()) {
-        builder = builder.with_hint(extension);
-    }
-    builder.build().map_err(AudioError::Decode)
 }
 
 struct Buffer {

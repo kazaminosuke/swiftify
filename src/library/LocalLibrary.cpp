@@ -57,6 +57,7 @@ const QString kLocalPrefix = QStringLiteral("local:");
 /// what the core's decoder plays (spotify-core's local::AUDIO_EXTENSIONS)
 const QSet<QString> kMusicExtensions {
     QStringLiteral("mp3"), QStringLiteral("flac"), QStringLiteral("ogg"), QStringLiteral("oga"),
+    QStringLiteral("opus"), QStringLiteral("webm"), QStringLiteral("mka"),
     QStringLiteral("m4a"), QStringLiteral("mp4"), QStringLiteral("aac"), QStringLiteral("alac"),
     QStringLiteral("wav"), QStringLiteral("aif"), QStringLiteral("aiff"),
 };
