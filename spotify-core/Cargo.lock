@@ -2783,6 +2783,7 @@ dependencies = [
  "serde_json",
  "swift-bridge",
  "swift-bridge-build",
+ "swiftify-native-audio",
  "symphonia",
  "tokio",
 ]
@@ -2856,6 +2857,13 @@ dependencies = [
  "quote",
  "swift-bridge-ir",
  "syn 1.0.109",
+]
+
+[[package]]
+name = "swiftify-native-audio"
+version = "0.1.0"
+dependencies = [
+ "rodio",
 ]
 
 [[package]]
