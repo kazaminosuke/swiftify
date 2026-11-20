@@ -32,7 +32,8 @@ audio test results are in [Native playback](native-playback.md).
   [Backend assembly](https://github.com/gridoe/refryt/blob/039d83e5955b3e3386de7a8cb60d019a344e877f/crates/refryt/src/backend.rs#L1013-L1037)
   [Proxy refresh](https://github.com/gridoe/refryt/blob/039d83e5955b3e3386de7a8cb60d019a344e877f/crates/refryt-resolve/src/proxy.rs#L424-L505)
   [Native resolver feature](https://github.com/gridoe/refryt/blob/039d83e5955b3e3386de7a8cb60d019a344e877f/crates/refryt-resolve/Cargo.toml#L22-L40)
-  [Sign-in](https://github.com/gridoe/refryt/blob/039d83e5955b3e3386de7a8cb60d019a344e877f/README.md#L196-L198)
+  [Sign-in window](https://github.com/gridoe/refryt/blob/039d83e5955b3e3386de7a8cb60d019a344e877f/crates/refryt/src/webview_login.rs#L132-L151)
+  [Browser session option](https://github.com/gridoe/refryt/blob/039d83e5955b3e3386de7a8cb60d019a344e877f/README.md#L196-L198)
   [Credential storage](https://github.com/gridoe/refryt/blob/039d83e5955b3e3386de7a8cb60d019a344e877f/crates/refryt/src/auth.rs#L62-L101)
 - **Queue, time and errors.** The core queue holds current index, resume point,
   shuffle order and history. Async play results are accepted by generation.
@@ -48,8 +49,8 @@ audio test results are in [Native playback](native-playback.md).
 - **Engine and audio processing.** Tauri presents a WebView UI. The Rust
   playback crate uses libmpv's playlist for gapless lookahead and a second
   libmpv deck for crossfade transitions. Its controls combine gain, speed,
-  pitch and convolution reverb. There is also an optional local vocal-separation path
-  with dedicated model and runtime notices.
+  pitch and convolution reverb. There is also an optional local
+  vocal-separation path with dedicated model and runtime notices.
   [Engine](https://github.com/SimoHypers/limusic/blob/5b9d1b3abd17a034dc4984ad956ff3a7a7059b7b/crates/player/src/lib.rs#L389-L478)
   [Lookahead and crossfade](https://github.com/SimoHypers/limusic/blob/5b9d1b3abd17a034dc4984ad956ff3a7a7059b7b/crates/player/src/lib.rs#L574-L647)
   [Effects](https://github.com/SimoHypers/limusic/blob/5b9d1b3abd17a034dc4984ad956ff3a7a7059b7b/crates/player/src/lib.rs#L813-L892)
@@ -64,6 +65,7 @@ audio test results are in [Native playback](native-playback.md).
   [Resolver](https://github.com/SimoHypers/limusic/blob/5b9d1b3abd17a034dc4984ad956ff3a7a7059b7b/src-tauri/src/orchestrator.rs#L215-L237)
   [Range validation](https://github.com/SimoHypers/limusic/blob/5b9d1b3abd17a034dc4984ad956ff3a7a7059b7b/src-tauri/src/orchestrator.rs#L794)
   [Proxy](https://github.com/SimoHypers/limusic/blob/5b9d1b3abd17a034dc4984ad956ff3a7a7059b7b/src-tauri/src/audioproxy.rs#L305-L376)
+  [Sign-in window](https://github.com/SimoHypers/limusic/blob/5b9d1b3abd17a034dc4984ad956ff3a7a7059b7b/src-tauri/src/session.rs#L103-L140)
   [Session lifecycle](https://github.com/SimoHypers/limusic/blob/5b9d1b3abd17a034dc4984ad956ff3a7a7059b7b/docs/SIGN-IN-SESSIONS.md)
 - **Queue, time and errors.** Queue state keeps item index, source, repeat,
   pre-shuffle order and the primed next entry. The player distinguishes EOF
@@ -99,6 +101,7 @@ audio test results are in [Native playback](native-playback.md).
   [Resolver](https://github.com/Mercyy00/Raaga/blob/cc79085d5d9e3b8ec03283e89950185e584e56f1/src-tauri/src/orchestrator.rs#L182-L214)
   [Range validation](https://github.com/Mercyy00/Raaga/blob/cc79085d5d9e3b8ec03283e89950185e584e56f1/src-tauri/src/orchestrator.rs#L611)
   [Proxy](https://github.com/Mercyy00/Raaga/blob/cc79085d5d9e3b8ec03283e89950185e584e56f1/src-tauri/src/audioproxy.rs#L189-L257)
+  [Sign-in window](https://github.com/Mercyy00/Raaga/blob/cc79085d5d9e3b8ec03283e89950185e584e56f1/src-tauri/src/session.rs#L103-L140)
   [Session lifecycle](https://github.com/Mercyy00/Raaga/blob/cc79085d5d9e3b8ec03283e89950185e584e56f1/docs/SIGN-IN-SESSIONS.md)
 - **Queue, time and errors.** The queue remembers `played_from` to distinguish
   tracks passed during playback from tracks before the starting index. Player
@@ -141,6 +144,18 @@ audio test results are in [Native playback](native-playback.md).
    [Limusic format ranking](https://github.com/SimoHypers/limusic/blob/5b9d1b3abd17a034dc4984ad956ff3a7a7059b7b/src-tauri/src/orchestrator.rs#L985-L1004)
    [Raaga format ranking](https://github.com/Mercyy00/Raaga/blob/cc79085d5d9e3b8ec03283e89950185e584e56f1/src-tauri/src/orchestrator.rs#L770-L789)
 
+## Independent native playback probe
+
+On Debian 13, a standalone probe used libmpv `0.40.0-3+deb13u1` through its
+C API. The test generated two seconds of the same tone as AAC/MP4 and
+Opus/WebM. It disabled video and the network resolver, sought to 0.5 seconds
+while paused, resumed, read `audio-pts`, and waited for EOF. libmpv's PCM
+output contained 1.505 and 1.500 seconds of non-zero audio respectively.
+This verifies native demuxing, decoding and seek for the two local samples.
+It leaves audio-device timing, PCM access from Swiftify, Windows distribution
+and network streaming to subsequent tests.
+[Debian libmpv package](https://packages.debian.org/trixie/libmpv2)
+
 ## Technical feasibility and service permission
 
 The three codebases demonstrate how native decoding and output can sit
@@ -152,12 +167,13 @@ availability measurement.
 
 A browser cookie grants a session with the service. How it was obtained,
 how it is stored, what can be requested with it, and where it is sent need
-separate review. Audio/video separation, caching and use of undocumented
-interfaces have distinct conditions in the YouTube API policies. YouTube's
-general Terms apply to access and use of service content. Permissions for
-user-owned or licensed recordings also depend on the delivery route. An OSS
-license governs the application code. It does not give permission from
-YouTube or the music rights holder.
+separate review. The YouTube API policies restrict API clients' use of
+undocumented services, storage of audiovisual content, audio/video separation
+and background players. YouTube's general Terms apply to access and use of
+service content. Permissions for user-owned or licensed recordings also
+depend on the delivery route. An OSS license grants rights for application
+code. Media access and distribution require the relevant service and content
+permissions.
 [YouTube Terms of Service](https://www.youtube.com/t/terms)
 [YouTube API Developer Policies](https://developers.google.com/youtube/terms/developer-policies)
 
