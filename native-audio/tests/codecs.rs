@@ -14,6 +14,11 @@ fn opus_decodes_and_seeks_in_ogg_and_webm() {
         let mut source = open_file(&path).unwrap_or_else(|error| panic!("{file}: {error}"));
         assert_eq!(source.channels(), 1, "{file}");
         assert_eq!(source.sample_rate(), 48_000, "{file}");
+        let duration = source.total_duration().expect(file).as_millis();
+        assert!(
+            (1180..=1230).contains(&duration),
+            "{file}: duration was {duration} ms"
+        );
         let before = source.by_ref().take(4800).collect::<Vec<_>>();
         assert_tone(&before, 440.0, file);
 
