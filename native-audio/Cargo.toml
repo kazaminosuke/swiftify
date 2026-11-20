@@ -1,0 +1,22 @@
+[package]
+name = "swiftify-native-audio"
+version = "0.1.0"
+edition = "2024"
+license = "GPL-3.0-or-later"
+publish = false
+
+[features]
+default = ["player"]
+# The Spotify core shares the device adapter, with its own playback session.
+player = ["rodio/flac", "rodio/wav", "rodio/mp3", "rodio/vorbis", "rodio/mp4", "rodio/symphonia-alac", "rodio/symphonia-aiff"]
+
+[dependencies]
+rodio = { version = "=0.21.1", default-features = false, features = ["playback"] }
+
+[dev-dependencies]
+hound = "3.5.1"
+tempfile = "3"
+
+[[example]]
+name = "play-file"
+required-features = ["player"]
