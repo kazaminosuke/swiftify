@@ -25,6 +25,12 @@ fn main() -> Result<(), Box<dyn Error>> {
                 );
                 return Ok(());
             }
+            State::SourceFailed => {
+                return Err(AudioError::InputRead(
+                    snapshot.input_error.unwrap_or(io::ErrorKind::Other),
+                )
+                .into());
+            }
             State::OutputLost => return Err(AudioError::OutputLost.into()),
             _ => thread::sleep(Duration::from_millis(25)),
         }
