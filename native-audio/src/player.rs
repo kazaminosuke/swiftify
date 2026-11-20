@@ -21,7 +21,7 @@ use rodio::{
 
 use crate::{
     decode::open_media,
-    device::open_stereo_stream,
+    device::{OutputDevice, open_device_stream, open_stereo_stream},
     media::{FileMedia, MediaProvider, ReadFailure},
 };
 
@@ -86,7 +86,7 @@ impl fmt::Display for AudioError {
             Self::Decode(error) => write!(f, "could not decode audio file: {error}"),
             Self::Seek(error) => write!(f, "could not seek in audio file: {error}"),
             Self::DecoderThread(error) => write!(f, "could not start audio decoder: {error}"),
-            Self::OpenOutput => f.write_str("could not open the default audio output"),
+            Self::OpenOutput => f.write_str("could not open the audio output"),
             Self::PlayOutput(error) => write!(f, "could not start audio output: {error}"),
             Self::PauseOutput(error) => write!(f, "could not pause audio output: {error}"),
             Self::OutputLost => f.write_str("audio output was lost"),
@@ -113,6 +113,10 @@ pub struct Player {
 
 impl Player {
     pub fn open() -> Result<Self, AudioError> {
+        Self::open_output(None)
+    }
+
+    pub fn open_output(device: Option<&OutputDevice>) -> Result<Self, AudioError> {
         let slot = Arc::new(Mutex::new(RenderSlot {
             volume: 1.0,
             ..RenderSlot::default()
@@ -120,20 +124,23 @@ impl Player {
         let output_lost = Arc::new(AtomicBool::new(false));
         let render_slot = Arc::clone(&slot);
         let failed = Arc::clone(&output_lost);
-        let (stream, rate) = open_stereo_stream(
-            move |output, timing| {
-                output.fill(0.0);
-                if let Ok(slot) = render_slot.try_lock()
-                    && slot.running
-                    && let Some(buffer) = &slot.buffer
-                {
-                    let timestamp = timing.timestamp();
-                    let latency = timestamp.playback.duration_since(&timestamp.callback);
-                    buffer.render(output, slot.volume, Instant::now(), latency, slot.rate);
-                }
-            },
-            move |_| failed.store(true, Ordering::Release),
-        )
+        let fill = move |output: &mut [f32], timing: &cpal::OutputCallbackInfo| {
+            output.fill(0.0);
+            if let Ok(slot) = render_slot.try_lock()
+                && slot.running
+                && let Some(buffer) = &slot.buffer
+            {
+                let timestamp = timing.timestamp();
+                let latency = timestamp.playback.duration_since(&timestamp.callback);
+                let gain = if slot.muted { 0.0 } else { slot.volume };
+                buffer.render(output, gain, Instant::now(), latency, slot.rate);
+            }
+        };
+        let error = move |_| failed.store(true, Ordering::Release);
+        let (stream, rate) = match device {
+            Some(device) => open_device_stream(&device.cpal, fill, error),
+            None => open_stereo_stream(fill, error),
+        }
         .ok_or(AudioError::OpenOutput)?;
         lock(&slot).rate = rate;
 
@@ -146,6 +153,48 @@ impl Player {
             paused_at: Some(Instant::now()),
             revision: 0,
         })
+    }
+
+    /// Switches the output on the control thread. `None` resolves the current
+    /// default again, including after an output disconnect. Existing media is
+    /// reopened near the last presentation position, or the submitted position
+    /// if the device no longer has a usable clock. A completed track becomes idle.
+    pub fn switch_output(&mut self, device: Option<&OutputDevice>) -> Result<(), AudioError> {
+        let mut replacement = Self::open_output(device)?;
+        replacement.revision = self.revision;
+        replacement.set_volume(self.volume())?;
+        replacement.set_muted(self.is_muted());
+        let was_running = self.paused_at.is_none();
+        let restore_old = was_running && !self.output_lost.load(Ordering::Acquire);
+        if restore_old {
+            self.pause()?;
+        }
+        let snapshot = self.snapshot();
+        let replace = (|| {
+            if let Some(track) = &self.track
+                && !matches!(snapshot.state, State::Ended | State::SourceFailed)
+            {
+                let position = snapshot
+                    .audible_position
+                    .unwrap_or(snapshot.submitted_position);
+                let track = Track::open(Arc::clone(&track.provider), replacement.rate, position)?;
+                replacement.install(track);
+                if was_running {
+                    replacement.play()?;
+                }
+            } else if self.track.is_some() {
+                replacement.revision = self.revision.wrapping_add(1);
+            }
+            Ok(())
+        })();
+        if let Err(error) = replace {
+            if restore_old && self.play().is_err() {
+                self.output_lost.store(true, Ordering::Release);
+            }
+            return Err(error);
+        }
+        *self = replacement;
+        Ok(())
     }
 
     /// Prepares an audio file and leaves it paused. If opening the new file
@@ -237,6 +286,18 @@ impl Player {
         Ok(())
     }
 
+    pub fn volume(&self) -> f32 {
+        lock(&self.slot).volume
+    }
+
+    pub fn set_muted(&mut self, muted: bool) {
+        lock(&self.slot).muted = muted;
+    }
+
+    pub fn is_muted(&self) -> bool {
+        lock(&self.slot).muted
+    }
+
     pub fn snapshot(&self) -> Snapshot {
         let output_lost = self.output_lost.load(Ordering::Acquire);
         let Some(track) = &self.track else {
@@ -308,6 +369,7 @@ impl Player {
 struct RenderSlot {
     running: bool,
     volume: f32,
+    muted: bool,
     rate: u32,
     buffer: Option<Arc<Buffer>>,
 }
@@ -479,7 +541,7 @@ impl Buffer {
         };
         let count = output.len().min(queue.samples.len()) / CHANNELS * CHANNELS;
         for (out, sample) in output.iter_mut().zip(queue.samples.drain(..count)) {
-            *out = sample * volume;
+            *out = if volume == 0.0 { 0.0 } else { sample * volume };
         }
         if count != 0 {
             queue
@@ -590,6 +652,16 @@ fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn muted_frames_advance_the_clock_and_output_silence() {
+        let buffer = Buffer::new(32);
+        lock(&buffer.queue).samples.extend([0.5, f32::NAN]);
+        let mut output = [1.0; 2];
+        buffer.render(&mut output, 0.0, Instant::now(), None, 48_000);
+        assert_eq!(output, [0.0; 2]);
+        assert_eq!(lock(&buffer.queue).clock.submitted_frames, 1);
+    }
 
     #[test]
     fn a_failed_input_does_not_report_natural_end() {

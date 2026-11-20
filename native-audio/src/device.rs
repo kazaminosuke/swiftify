@@ -30,6 +30,18 @@ where
     E: FnMut(cpal::StreamError) + Clone + Send + 'static,
 {
     let device = cpal::default_host().default_output_device()?;
+    open_device_stream(&device, fill, error)
+}
+
+pub(crate) fn open_device_stream<F, E>(
+    device: &cpal::Device,
+    fill: F,
+    error: E,
+) -> Option<(cpal::Stream, u32)>
+where
+    F: FnMut(&mut [f32], &cpal::OutputCallbackInfo) + Clone + Send + 'static,
+    E: FnMut(cpal::StreamError) + Clone + Send + 'static,
+{
     let supported = device.default_output_config().ok()?;
     let config: cpal::StreamConfig = supported.config();
     let rate = config.sample_rate.0;
@@ -48,18 +60,42 @@ where
     let stream = larger
         .and_then(|larger| {
             build_stereo_stream(
-                &device,
+                device,
                 supported.sample_format(),
                 &larger,
                 fill.clone(),
                 error.clone(),
             )
         })
-        .or_else(|| {
-            build_stereo_stream(&device, supported.sample_format(), &config, fill, error)
-        })?;
+        .or_else(|| build_stereo_stream(device, supported.sample_format(), &config, fill, error))?;
     stream.pause().ok()?;
     Some((stream, rate))
+}
+
+/// An output discovered on the current host. Keep the handle for selection;
+/// display names can be repeated or change after device reconfiguration.
+#[cfg(feature = "player")]
+pub struct OutputDevice {
+    pub(crate) cpal: cpal::Device,
+    name: String,
+}
+
+#[cfg(feature = "player")]
+impl OutputDevice {
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+}
+
+#[cfg(feature = "player")]
+pub fn output_devices() -> Result<Vec<OutputDevice>, cpal::DevicesError> {
+    Ok(cpal::default_host()
+        .output_devices()?
+        .filter_map(|cpal| {
+            let name = cpal.name().ok()?;
+            Some(OutputDevice { cpal, name })
+        })
+        .collect())
 }
 
 fn build_stereo_stream<F, E>(
