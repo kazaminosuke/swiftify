@@ -424,10 +424,11 @@ impl Buffer {
             drop(queue);
 
             let mut samples = 0;
-            for frame in decoded.chunks_exact_mut(CHANNELS) {
+            let (frames, _) = decoded.as_chunks_mut::<CHANNELS>();
+            for frame in frames {
                 let Some(left) = source.next() else { break };
                 let Some(right) = source.next() else { break };
-                frame.copy_from_slice(&[left, right]);
+                *frame = [left, right];
                 samples += CHANNELS;
             }
 
