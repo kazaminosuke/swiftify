@@ -4,7 +4,7 @@ use std::{
     collections::VecDeque,
     error::Error,
     fmt, io,
-    path::{Path, PathBuf},
+    path::Path,
     sync::{
         Arc, Condvar, Mutex, MutexGuard, PoisonError,
         atomic::{AtomicBool, Ordering},
@@ -19,7 +19,11 @@ use rodio::{
     source::UniformSourceIterator,
 };
 
-use crate::{decode::open_file, device::open_stereo_stream};
+use crate::{
+    decode::open_media,
+    device::open_stereo_stream,
+    media::{FileMedia, MediaProvider, ReadFailure},
+};
 
 const CHANNELS: usize = 2;
 const DECODE_SAMPLES: usize = 2_048;
@@ -35,6 +39,7 @@ pub enum State {
     /// The last samples were submitted and their output time has not elapsed.
     Draining,
     Ended,
+    SourceFailed,
     OutputLost,
 }
 
@@ -54,11 +59,13 @@ pub struct Snapshot {
     /// Changes after a successful load, seek or stop. Invalidate old cues.
     pub timeline_revision: u64,
     pub duration: Option<Duration>,
+    pub input_error: Option<io::ErrorKind>,
 }
 
 #[derive(Debug)]
 pub enum AudioError {
-    File(io::Error),
+    Input(io::ErrorKind),
+    InputRead(io::ErrorKind),
     Decode(rodio::decoder::DecoderError),
     Seek(rodio::source::SeekError),
     DecoderThread(io::Error),
@@ -74,7 +81,8 @@ pub enum AudioError {
 impl fmt::Display for AudioError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::File(error) => write!(f, "could not open audio file: {error}"),
+            Self::Input(kind) => write!(f, "could not open audio input: {kind}"),
+            Self::InputRead(kind) => write!(f, "audio input failed: {kind}"),
             Self::Decode(error) => write!(f, "could not decode audio file: {error}"),
             Self::Seek(error) => write!(f, "could not seek in audio file: {error}"),
             Self::DecoderThread(error) => write!(f, "could not start audio decoder: {error}"),
@@ -82,8 +90,8 @@ impl fmt::Display for AudioError {
             Self::PlayOutput(error) => write!(f, "could not start audio output: {error}"),
             Self::PauseOutput(error) => write!(f, "could not pause audio output: {error}"),
             Self::OutputLost => f.write_str("audio output was lost"),
-            Self::NoTrack => f.write_str("no audio file is loaded"),
-            Self::Ended => f.write_str("seek or load an audio file before playing again"),
+            Self::NoTrack => f.write_str("no audio input is loaded"),
+            Self::Ended => f.write_str("seek or load an audio input before playing again"),
             Self::InvalidVolume => f.write_str("volume must be between 0 and 1"),
         }
     }
@@ -143,8 +151,14 @@ impl Player {
     /// Prepares an audio file and leaves it paused. If opening the new file
     /// fails, the previous track remains active.
     pub fn load_file(&mut self, path: impl AsRef<Path>) -> Result<(), AudioError> {
+        self.load_source(Arc::new(FileMedia(path.as_ref().to_owned())))
+    }
+
+    /// Prepares a source on the control thread and leaves it paused. A failed
+    /// open or decode keeps the existing track and its generation intact.
+    pub fn load_source(&mut self, provider: Arc<dyn MediaProvider>) -> Result<(), AudioError> {
         self.check_output()?;
-        let track = Track::open(path.as_ref(), self.rate, Duration::ZERO)?;
+        let track = Track::open(provider, self.rate, Duration::ZERO)?;
         if self.paused_at.is_none() {
             self.pause()?;
         }
@@ -154,10 +168,16 @@ impl Player {
 
     pub fn play(&mut self) -> Result<(), AudioError> {
         self.check_output()?;
-        match self.snapshot().state {
+        let snapshot = self.snapshot();
+        match snapshot.state {
             State::Idle => return Err(AudioError::NoTrack),
             State::OutputLost => return Err(AudioError::OutputLost),
             State::Ended => return Err(AudioError::Ended),
+            State::SourceFailed => {
+                return Err(AudioError::InputRead(
+                    snapshot.input_error.unwrap_or(io::ErrorKind::Other),
+                ));
+            }
             _ => {}
         }
         if let Some(paused_at) = self.paused_at {
@@ -191,7 +211,7 @@ impl Player {
         let position = track
             .duration
             .map_or(position, |duration| position.min(duration));
-        let replacement = Track::open(&track.path, self.rate, position)?;
+        let replacement = Track::open(Arc::clone(&track.provider), self.rate, position)?;
         self.install(replacement);
         Ok(())
     }
@@ -231,6 +251,7 @@ impl Player {
                 output_latency: None,
                 timeline_revision: self.revision,
                 duration: None,
+                input_error: None,
             };
         };
         let queued = lock(&track.buffer.queue);
@@ -263,6 +284,7 @@ impl Player {
             },
             timeline_revision: self.revision,
             duration: track.duration,
+            input_error: queued.input_error,
         }
     }
 
@@ -291,7 +313,7 @@ struct RenderSlot {
 }
 
 struct Track {
-    path: PathBuf,
+    provider: Arc<dyn MediaProvider>,
     duration: Option<Duration>,
     offset: Duration,
     buffer: Arc<Buffer>,
@@ -299,24 +321,39 @@ struct Track {
 }
 
 impl Track {
-    fn open(path: &Path, rate: u32, offset: Duration) -> Result<Self, AudioError> {
-        let mut decoder = open_file(path).map_err(AudioError::Decode)?;
+    fn open(
+        provider: Arc<dyn MediaProvider>,
+        rate: u32,
+        offset: Duration,
+    ) -> Result<Self, AudioError> {
+        let input = provider
+            .open()
+            .map_err(|error| AudioError::Input(error.kind()))?;
+        let failure = input.failure.clone();
+        let mut decoder = open_media(input).map_err(|error| {
+            failure
+                .kind()
+                .map_or(AudioError::Decode(error), AudioError::InputRead)
+        })?;
         let duration = decoder.total_duration();
         if !offset.is_zero() {
             decoder.try_seek(offset).map_err(AudioError::Seek)?;
         }
 
+        if let Some(kind) = failure.kind() {
+            return Err(AudioError::InputRead(kind));
+        }
         let source = UniformSourceIterator::new(decoder, CHANNELS as u16, rate);
         let capacity = (rate as usize * CHANNELS / 4).max(DECODE_SAMPLES * 2);
         let buffer = Arc::new(Buffer::new(capacity));
         let output = Arc::clone(&buffer);
         let decoder = thread::Builder::new()
             .name("swiftify-native-decoder".to_owned())
-            .spawn(move || output.decode(source, capacity))
+            .spawn(move || output.decode(source, capacity, failure))
             .map_err(AudioError::DecoderThread)?;
 
         Ok(Self {
-            path: path.to_owned(),
+            provider,
             duration,
             offset,
             buffer,
@@ -343,6 +380,7 @@ struct Buffer {
 struct Queue {
     samples: VecDeque<f32>,
     finished: bool,
+    input_error: Option<io::ErrorKind>,
     cancelled: bool,
     starved: bool,
     clock: AudioClock,
@@ -358,7 +396,11 @@ impl Queue {
                 .back()
                 .is_none_or(|span| span.end <= paused_at.unwrap_or(now))
         {
-            State::Ended
+            if self.input_error.is_some() {
+                State::SourceFailed
+            } else {
+                State::Ended
+            }
         } else if paused_at.is_some() {
             State::Paused
         } else if exhausted {
@@ -377,6 +419,7 @@ impl Buffer {
             queue: Mutex::new(Queue {
                 samples: VecDeque::with_capacity(capacity),
                 finished: false,
+                input_error: None,
                 cancelled: false,
                 starved: true,
                 clock: AudioClock::new(),
@@ -385,7 +428,7 @@ impl Buffer {
         }
     }
 
-    fn decode(&self, mut source: impl Iterator<Item = f32>, capacity: usize) {
+    fn decode(&self, mut source: impl Iterator<Item = f32>, capacity: usize, failure: ReadFailure) {
         let mut decoded = [0.0; DECODE_SAMPLES];
         loop {
             let queue = self
@@ -415,6 +458,7 @@ impl Buffer {
             queue.samples.extend(decoded[..samples].iter().copied());
             if samples < DECODE_SAMPLES {
                 queue.finished = true;
+                queue.input_error = failure.kind();
                 return;
             }
         }
@@ -546,6 +590,17 @@ fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_failed_input_does_not_report_natural_end() {
+        let buffer = Buffer::new(DECODE_SAMPLES * 2);
+        let failure = ReadFailure::default();
+        failure.record(io::ErrorKind::TimedOut);
+        buffer.decode(std::iter::empty(), DECODE_SAMPLES * 2, failure);
+        let queue = lock(&buffer.queue);
+        assert_eq!(queue.state(None, Instant::now()), State::SourceFailed);
+        assert_eq!(queue.input_error, Some(io::ErrorKind::TimedOut));
+    }
 
     #[test]
     fn silence_does_not_advance_the_submitted_clock() {
