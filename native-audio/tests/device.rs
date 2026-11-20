@@ -38,6 +38,8 @@ fn decodes_seeks_and_drains_through_the_audio_device() {
     assert_eq!(loaded.state, State::Paused);
     assert_eq!(loaded.duration, Some(Duration::from_secs(2)));
     assert_eq!(loaded.submitted_position, Duration::ZERO);
+    assert_eq!(loaded.audible_position, None);
+    assert_eq!(loaded.output_latency, None);
 
     let invalid = directory.path().join("invalid.wav");
     fs::write(&invalid, b"not an audio file").unwrap();
@@ -51,6 +53,11 @@ fn decodes_seeks_and_drains_through_the_audio_device() {
     player.seek(seek).unwrap();
     assert_eq!(player.snapshot().state, State::Paused);
     assert_eq!(player.snapshot().submitted_position, seek);
+    assert_ne!(
+        player.snapshot().timeline_revision,
+        loaded.timeline_revision
+    );
+    assert_eq!(player.snapshot().audible_position, None);
 
     player.set_volume(0.25).unwrap();
     player.play().unwrap();
@@ -73,5 +80,8 @@ fn decodes_seeks_and_drains_through_the_audio_device() {
     }
     assert!(matches!(player.play(), Err(AudioError::Ended)));
     player.stop().unwrap();
-    assert_eq!(player.snapshot().state, State::Idle);
+    let stopped = player.snapshot();
+    assert_eq!(stopped.state, State::Idle);
+    assert_eq!(stopped.audible_position, None);
+    assert_ne!(stopped.timeline_revision, loaded.timeline_revision);
 }
