@@ -40,6 +40,9 @@
 #include "theme/PlayerStyle.h"
 #include "theme/Theme.h"
 
+#ifdef SWIFTIFY_HAS_YOUTUBE_CLIENT
+#include "youtube/YouTubeController.h"
+#endif
 #ifdef SWIFTIFY_HAS_SOLOIST
 #include "soloist/SoloistCore.h"
 #endif
@@ -277,6 +280,28 @@ int main(int argc, char *argv[])
     QGuiApplication::setWindowIcon(QIcon(QStringLiteral(":/qt/qml/Swiftify/resources/swiftify-icon.png")));
 #endif
 
+    // the plain style: every control swiftify shows is drawn by its own components.
+    QQuickStyle::setStyle(QStringLiteral("Basic"));
+    fonts::loadIconFont();
+    fonts::loadInterfaceFont();
+
+#ifdef SWIFTIFY_HAS_YOUTUBE_CLIENT
+    if (!QCoreApplication::arguments().contains(QStringLiteral("--spotify"))) {
+        application.setQuitOnLastWindowClosed(true);
+        Settings settings(nullptr);
+        Translations translations(&settings);
+        Theme theme(&settings);
+        youtube::YouTubeController music;
+        QQmlApplicationEngine engine;
+        QObject::connect(&translations, &Translations::languageChanged, &engine, &QQmlEngine::retranslate);
+        QObject::connect(&engine, &QQmlApplicationEngine::objectCreationFailed, &application,
+                         [] { QCoreApplication::exit(EXIT_FAILURE); }, Qt::QueuedConnection);
+        engine.setInitialProperties({{QStringLiteral("music"), QVariant::fromValue(&music)}});
+        engine.loadFromModule("Swiftify", "YouTubeWindow");
+        return application.exec();
+    }
+#endif
+
     SingleInstance instance;
     if (instance.forwardToRunningInstance(QCoreApplication::arguments())) {
         return EXIT_SUCCESS;
@@ -290,11 +315,6 @@ int main(int argc, char *argv[])
     ScrollMomentum scrollMomentum;
     application.installEventFilter(&scrollMomentum);
 #endif
-
-    // the plain style: every control swiftify shows is drawn by its own components.
-    QQuickStyle::setStyle(QStringLiteral("Basic"));
-    fonts::loadIconFont();
-    fonts::loadInterfaceFont();
 
     ErrorCenter errors(nullptr);
     Settings settings(nullptr);

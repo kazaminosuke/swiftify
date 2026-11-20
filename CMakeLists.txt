@@ -78,6 +78,15 @@ endif()
 if(SWIFTIFY_SOLOIST)
     find_package(Qt6 6.10 REQUIRED COMPONENTS WebSockets)
 endif()
+if(SWIFTIFY_IS_LINUX OR WIN32)
+    set(SWIFTIFY_YOUTUBE_DEFAULT ON)
+else()
+    set(SWIFTIFY_YOUTUBE_DEFAULT OFF)
+endif()
+option(SWIFTIFY_YOUTUBE_CLIENT "Build the YouTube client" ${SWIFTIFY_YOUTUBE_DEFAULT})
+if(SWIFTIFY_YOUTUBE_CLIENT)
+    find_package(Qt6 6.10 REQUIRED COMPONENTS NetworkAuth)
+endif()
 find_package(Qt6Keychain REQUIRED)
 if(WIN32)
     find_package(Qt6 6.10 REQUIRED COMPONENTS Widgets)
@@ -215,6 +224,10 @@ endif()
 # with them. a distro's package uses the system's and leaves them off
 option(SWIFTIFY_BUNDLED_QT "Install the licences of Qt, QtKeychain and QCoro, for a build that bundles them" OFF)
 if(SWIFTIFY_BUNDLED_QT)
+    if(SWIFTIFY_YOUTUBE_CLIENT)
+        set(SWIFTIFY_QT_NETWORKAUTH_NOTICE
+            "Qt Network Authorization is distributed under the GNU General Public License version 3. See LICENSE. Its source is in the Qt source archive linked above.")
+    endif()
     configure_file(packaging/licenses/qt.NOTICE.in ${SWIFTIFY_LICENSE_DIRECTORY}/qt.NOTICE @ONLY)
     list(APPEND SWIFTIFY_THIRD_PARTY_LICENSES
         ${CMAKE_CURRENT_SOURCE_DIR}/packaging/licenses/qt.LICENSE
@@ -228,6 +241,9 @@ endif()
 file(GLOB_RECURSE SWIFTIFY_SOURCES CONFIGURE_DEPENDS RELATIVE ${CMAKE_CURRENT_SOURCE_DIR}
     src/*.cpp src/*.h src/*.mm)
 list(REMOVE_ITEM SWIFTIFY_SOURCES src/main.cpp)
+if(NOT SWIFTIFY_YOUTUBE_CLIENT)
+    list(FILTER SWIFTIFY_SOURCES EXCLUDE REGEX "^src/youtube/(GoogleAuthorization|YouTubeController)")
+endif()
 if(NOT APPLE)
     list(FILTER SWIFTIFY_SOURCES EXCLUDE REGEX "^src/system/macos/")
 endif()
@@ -255,6 +271,16 @@ endif()
 
 file(GLOB_RECURSE SWIFTIFY_QML CONFIGURE_DEPENDS RELATIVE ${CMAKE_CURRENT_SOURCE_DIR}
     qml/*.qml)
+set(SWIFTIFY_QML_RESOURCES resources/swiftify-icon.png resources/cameo.png)
+if(SWIFTIFY_YOUTUBE_CLIENT)
+    list(APPEND SWIFTIFY_QML_RESOURCES
+        resources/youtube/developed-with-youtube-dark.png
+        resources/youtube/developed-with-youtube-light.png)
+    install(FILES resources/youtube/NOTICE.md
+        DESTINATION ${CMAKE_INSTALL_DATADIR}/licenses/swiftify RENAME YouTubeBrand.NOTICE)
+else()
+    list(REMOVE_ITEM SWIFTIFY_QML qml/YouTubeWindow.qml)
+endif()
 file(GLOB SWIFTIFY_SINGLETONS CONFIGURE_DEPENDS RELATIVE ${CMAKE_CURRENT_SOURCE_DIR}
     qml/design/*.qml)
 set_source_files_properties(${SWIFTIFY_SINGLETONS} PROPERTIES QT_QML_SINGLETON_TYPE TRUE)
@@ -272,7 +298,7 @@ qt_add_qml_module(swiftify_app
     VERSION 1.0
     SOURCES ${SWIFTIFY_SOURCES}
     QML_FILES ${SWIFTIFY_QML}
-    RESOURCES resources/swiftify-icon.png resources/cameo.png
+    RESOURCES ${SWIFTIFY_QML_RESOURCES}
     DEPENDENCIES QtQuick)
 # BATCHABLE: the spectrum's material can be merged into the scene graph's
 # batches, which needs the extra vertex input qsb adds for it.
@@ -338,6 +364,9 @@ target_compile_definitions(swiftify_app PUBLIC $<$<BOOL:${SWIFTIFY_SOLOIST}>:SWI
 if(TARGET Qt6::DBus)
     target_link_libraries(swiftify_app PUBLIC Qt6::DBus)
 endif()
+if(SWIFTIFY_YOUTUBE_CLIENT)
+    target_link_libraries(swiftify_app PRIVATE Qt6::NetworkAuth)
+endif()
 if(SWIFTIFY_SOLOIST)
     target_link_libraries(swiftify_app PUBLIC Qt6::WebSockets)
 endif()
@@ -396,6 +425,7 @@ if(WIN32)
 endif()
 
 qt_add_executable(swiftify src/main.cpp)
+target_compile_definitions(swiftify PRIVATE $<$<BOOL:${SWIFTIFY_YOUTUBE_CLIENT}>:SWIFTIFY_HAS_YOUTUBE_CLIENT>)
 target_link_libraries(swiftify PRIVATE swiftify_app swiftify_appplugin)
 if(SWIFTIFY_IS_LINUX)
     target_link_libraries(swiftify PRIVATE Qt6::Widgets)
