@@ -78,6 +78,7 @@ class PlaybackController : public QObject {
     Q_PROPERTY(bool loadingLyrics READ isLoadingLyrics NOTIFY lyricsChanged FINAL)
     Q_PROPERTY(QString lyricsMessage READ lyricsMessage NOTIFY lyricsChanged FINAL)
     Q_PROPERTY(int activeLyricIndex READ activeLyricIndex NOTIFY activeLyricIndexChanged FINAL)
+    Q_PROPERTY(int lyricsDelayMs READ lyricsDelayMs WRITE setLyricsDelayMs NOTIFY lyricsDelayChanged FINAL)
 
     Q_PROPERTY(bool showingLyrics READ isShowingLyrics WRITE setShowingLyrics NOTIFY panelsChanged FINAL)
     Q_PROPERTY(bool showingQueue READ isShowingQueue WRITE setShowingQueue NOTIFY panelsChanged FINAL)
@@ -139,6 +140,8 @@ public:
     bool isLoadingLyrics() const { return m_loadingLyrics; }
     QString lyricsMessage() const { return m_lyricsMessage; }
     int activeLyricIndex() const { return m_activeLyricIndex; }
+    int lyricsDelayMs() const { return m_lyricsDelayMs; }
+    void setLyricsDelayMs(int delayMs);
 
     bool isShowingLyrics() const { return m_showingLyrics; }
     bool isShowingQueue() const { return m_showingQueue; }
@@ -221,6 +224,7 @@ signals:
     void queueChanged();
     void lyricsChanged();
     void activeLyricIndexChanged();
+    void lyricsDelayChanged();
     void panelsChanged();
     void sleepTimerChanged();
     void analysisActiveChanged();
@@ -334,6 +338,7 @@ private:
     bool m_loadingLyrics = false;
     QString m_lyricsMessage;
     int m_activeLyricIndex = -1;
+    int m_lyricsDelayMs = 0;
     bool m_showingLyrics = true;
     bool m_showingQueue = false;
 

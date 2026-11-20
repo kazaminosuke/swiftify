@@ -48,6 +48,8 @@ PlaybackController *s_instance = nullptr;
 const QString kCatchphrase = QStringLiteral("i mean i guess bro");
 const QString kVolumeKey = QStringLiteral("playerVolume");
 const QString kVolumeBeforeMuteKey = QStringLiteral("playerVolumeBeforeMute");
+const QString kLyricsDelayKey = QStringLiteral("lyricsDelayMs");
+constexpr int kLyricsDelayLimitMs = 10'000;
 const QString kPlaybackStateKey = QStringLiteral("lastPlaybackState");
 
 /// a restart is offered after this much of a song has played
@@ -102,6 +104,8 @@ PlaybackController::PlaybackController(PlaybackCore *core, SpotifySession *sessi
     });
     connect(m_session, &SpotifySession::loggedOut, this, &PlaybackController::reset);
 
+    m_lyricsDelayMs = std::clamp(m_settings->value(kLyricsDelayKey, 0).toInt(),
+                                -kLyricsDelayLimitMs, kLyricsDelayLimitMs);
     restorePlaybackState();
     m_checkpointTimer.setInterval(5000);
     connect(&m_checkpointTimer, &QTimer::timeout, this, &PlaybackController::savePlaybackState);
@@ -1360,9 +1364,21 @@ QCoro::Task<> PlaybackController::runLoadLyrics(Song song, CancelToken token)
     updateActiveLyricLine();
 }
 
+void PlaybackController::setLyricsDelayMs(int delayMs)
+{
+    const int delay = std::clamp(delayMs, -kLyricsDelayLimitMs, kLyricsDelayLimitMs);
+    if (m_lyricsDelayMs == delay) {
+        return;
+    }
+    m_lyricsDelayMs = delay;
+    m_settings->setValue(kLyricsDelayKey, delay);
+    emit lyricsDelayChanged();
+    updateActiveLyricLine();
+}
+
 void PlaybackController::updateActiveLyricLine()
 {
-    const int index = m_lyrics ? m_lyrics->lineIndex(m_livePositionMs) : -1;
+    const int index = m_lyrics ? m_lyrics->lineIndex(qint64(m_livePositionMs) - m_lyricsDelayMs) : -1;
     if (index != m_activeLyricIndex) {
         m_activeLyricIndex = index;
         emit activeLyricIndexChanged();
@@ -1375,7 +1391,8 @@ void PlaybackController::seekToLyricLine(int index)
     if (!m_lyrics || !m_lyrics->synchronized || index < 0 || index >= m_lyrics->lines.size()) {
         return;
     }
-    seek(int(m_lyrics->lines.at(index).startTimeMs));
+    const qint64 destination = qint64(m_lyrics->lines.at(index).startTimeMs) + m_lyricsDelayMs;
+    seek(int(std::clamp<qint64>(destination, 0, std::numeric_limits<int>::max())));
 }
 
 void PlaybackController::setShowingLyrics(bool showing)
