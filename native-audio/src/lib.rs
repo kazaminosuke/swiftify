@@ -5,6 +5,9 @@
 #[doc(hidden)]
 pub mod device;
 
+#[cfg(feature = "file-codecs")]
+pub mod decode;
+
 #[cfg(feature = "player")]
 mod player;
 

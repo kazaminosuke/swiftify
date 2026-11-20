@@ -94,3 +94,39 @@ open-source implementations, their licenses and service constraints.
 | 2026-11-20 18:24 | Source comparison and CI verification, official App Server | HTTP 401. No percentage inferred. |
 | 2026-11-20 18:30 | Local codec comparison and Windows/Linux CI, official App Server | HTTP 401. No percentage inferred. |
 | 2026-11-20 18:35 | Final check after the Linux Qt build, official App Server | HTTP 401. No percentage inferred. |
+
+## Shared Opus playback stage
+
+The Opus stage adds Ogg Opus and Matroska/WebM Opus to the standalone engine
+and the existing Qt local library, transport and DSP path. A container probe
+routes Opus to Symphonia 0.6.1 and `symphonia-opus` 0.1.3. Rodio continues to
+handle the existing formats. Qt converts its decoded local PCM to the DSP's
+44.1 kHz stereo format before normalization, EQ, playback shaping and spectrum
+analysis. Existing Qt queue, repeat, shuffle and media controls can operate on
+these local files. Matroska/WebM metadata uses the filename and folder art
+fallback when the existing metadata reader cannot open the container.
+
+The shared packet decoder warms up for 80 ms on seek where the container
+allows it. The generated two-tone fixtures verify PCM, seek destination and
+remaining sample count in Ogg and WebM. The runtime library build uses Rust
+only for this codec, so it introduces no libmpv or libopus shared-library
+packaging requirement. The independent libmpv probe remains a useful reference.
+Symphonia and the Opus crate use MPL-2.0. `regex-lite` offers MIT or Apache-2.0.
+Their shipped notices are listed in `packaging/licenses/rust-crates.LICENSE`.
+No application code from the three comparison clients is copied. The new
+Opus decoder is a smaller independent dependency than libmpv, but its release
+history is recent and the fixture coverage here is limited to conventional
+mono files. Preserve MPL notices and corresponding source access on release.
+
+The shared decoder still presents a local `Source` to Rodio. The legacy
+Qt output consumes samples through the existing app clock. The standalone
+CPAL clock can estimate when samples are audible. The network error model,
+Qt integration of that clock, precise WebM padding and transitions between
+sources remain open.
+
+### Codex usage checks for this stage (JST)
+
+| Time | Check | Result |
+| --- | --- | --- |
+| 2026-11-20 18:55 | Start, official Codex App Server `account/rateLimits/read` | HTTP 401. Remaining usage unavailable. |
+| 2026-11-20 19:00 | Codec smoke tests, official App Server | HTTP 401. No percentage inferred. |

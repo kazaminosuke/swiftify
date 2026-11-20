@@ -22,7 +22,6 @@
 
 use std::{
     collections::VecDeque,
-    fs, io,
     path::PathBuf,
     sync::{
         Arc,
@@ -31,7 +30,9 @@ use std::{
     time::Duration,
 };
 
-use rodio::Source;
+use librespot::playback::{NUM_CHANNELS, SAMPLE_RATE};
+use rodio::{Source, source::UniformSourceIterator};
+use swiftify_native_audio::decode::FileSource;
 
 use crate::dsp::{DspProcessor, SharedDsp};
 use crate::output::BlockSource;
@@ -44,7 +45,7 @@ use crate::spectrum::{ANALYSIS_SAMPLE_COUNT, SharedSpectrum};
 /// active local-file playback session.
 #[derive(Clone)]
 pub(crate) struct LocalPlayback {
-    /// on-disk path of the flac file being played (needed for re-decoding on seek).
+    /// on-disk path of the file being played (needed for re-decoding on seek).
     pub(crate) path: PathBuf,
     /// total duration in milliseconds.
     pub(crate) duration_ms: u64,
@@ -52,10 +53,6 @@ pub(crate) struct LocalPlayback {
     pub(crate) pushed_frames: Arc<AtomicU64>,
     /// absolute position represented by the first sample in the active source.
     pub(crate) base_position_ms: u64,
-    /// number of audio channels in the decoded stream.
-    pub(crate) channels: u32,
-    /// sample rate of the decoded stream.
-    pub(crate) sample_rate: u32,
     /// linear gain from the file's replaygain tags (1.0 when untagged).
     pub(crate) replay_gain: f32,
     /// signals an in-flight decode to stop (on a seek/track change).
@@ -64,11 +61,9 @@ pub(crate) struct LocalPlayback {
 
 impl LocalPlayback {
     pub(crate) fn position_ms(&self) -> u32 {
-        let channels = self.channels.max(1) as u64;
-        let sample_rate = self.sample_rate.max(1) as u64;
         let samples = self.pushed_frames.load(Ordering::Relaxed);
         self.base_position_ms
-            .saturating_add(samples / channels * 1_000 / sample_rate)
+            .saturating_add(samples / NUM_CHANNELS as u64 * 1_000 / SAMPLE_RATE as u64)
             .min(u32::MAX as u64) as u32
     }
 }
@@ -78,7 +73,7 @@ impl LocalPlayback {
 const DSP_BLOCK: usize = 4_096;
 
 pub(crate) struct LocalTrackSource {
-    inner: rodio::Decoder<io::BufReader<fs::File>>,
+    inner: UniformSourceIterator<FileSource>,
     spectrum: SharedSpectrum,
     pushed_frames: Arc<AtomicU64>,
     cancel: Arc<AtomicBool>,
@@ -95,7 +90,7 @@ pub(crate) struct LocalTrackSource {
 
 impl LocalTrackSource {
     pub(crate) fn new(
-        decoder: rodio::Decoder<io::BufReader<fs::File>>,
+        decoder: FileSource,
         spectrum: SharedSpectrum,
         pushed_frames: Arc<AtomicU64>,
         cancel: Arc<AtomicBool>,
@@ -104,7 +99,7 @@ impl LocalTrackSource {
         normalise: Arc<AtomicBool>,
     ) -> Self {
         Self {
-            inner: decoder,
+            inner: UniformSourceIterator::new(decoder, NUM_CHANNELS as u16, SAMPLE_RATE),
             spectrum,
             pushed_frames,
             cancel,
@@ -238,8 +233,6 @@ mod tests {
             duration_ms: 120_000,
             pushed_frames: Arc::new(AtomicU64::new(44_100 as u64 * 2)),
             base_position_ms: 30_000,
-            channels: 2,
-            sample_rate: 44_100,
             replay_gain: 1.0,
             cancel: Arc::new(AtomicBool::new(false)),
         };
