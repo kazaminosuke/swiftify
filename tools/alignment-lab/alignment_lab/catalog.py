@@ -1,11 +1,13 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 
+import hashlib
 import importlib.util
 import json
 import os
 import re
 import shutil
 from dataclasses import asdict, dataclass, replace
+from functools import lru_cache
 from pathlib import Path
 
 from .domain import AlignmentError
@@ -18,6 +20,24 @@ HUBERT_SOURCE = "https://huggingface.co/air-air/japanese-hubert-base-phoneme-ctc
 ONNX_PROFILES = ("mms-fp32", "mms-q8", "hubert-ja-q4")
 
 
+@lru_cache(maxsize=1)
+def onnx_providers():
+    try:
+        import numpy  # noqa: F401 -- ONNX alignment needs NumPy.
+        import onnxruntime
+        return onnxruntime.get_available_providers()
+    except (ImportError, OSError):
+        return []
+
+
+def sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as data:
+        while block := data.read(4 * 1024 * 1024):
+            digest.update(block)
+    return digest.hexdigest()
+
+
 @dataclass(frozen=True)
 class Entry:
     id: str
@@ -27,6 +47,7 @@ class Entry:
     source: str = ""
     path: str = ""
     reference_bytes: int | None = None
+    reference_sha256: str = ''
 
     @property
     def model_file(self) -> Path | None:
@@ -35,7 +56,8 @@ class Entry:
     def info(self) -> dict:
         installed = bool(self.model_file and self.model_file.is_file())
         onnx = self.profile in ONNX_PROFILES
-        runtime = onnx and all(importlib.util.find_spec(name) for name in ("numpy", "onnxruntime"))
+        providers = onnx_providers() if onnx and installed else []
+        runtime = "CPUExecutionProvider" in providers
         has_reader = importlib.util.find_spec("pykakasi") is not None
         languages = self.languages
         if onnx and not has_reader:
@@ -56,7 +78,8 @@ class Entry:
         return asdict(self) | {"installed": installed or self.profile == "heuristic", "status": status,
                               "runnable": bool(ffmpeg and (self.profile == "heuristic" or (installed and runtime and languages))),
                               "model_bytes": size, "can_assign": onnx, "languages": languages,
-                              "devices": (["auto", "cpu", "gpu"] if self.profile == "mms-fp32"
+                              "devices": (["auto", "cpu", "gpu"]
+                                          if self.profile == "mms-fp32" and "CUDAExecutionProvider" in providers
                                           else ["auto", "cpu"] if self.profile != "research" else [])}
 
     @property
@@ -81,11 +104,14 @@ BUILT_INS = {
         Entry("heuristic", "Heuristic Sync", "heuristic", "GPL-3.0-or-later (implementation)",
               reference_bytes=0),
         Entry("mms-fp32", "MMS-300M ONNX (FP32)", "mms-fp32", MMS_LICENSE, MMS_SOURCE,
-              reference_bytes=1_262_408_964),
+              reference_bytes=1_262_408_964,
+              reference_sha256="26b2c0ba8f11ed045424ae1a70bc0b76f080952fb62fab5a37b3b39d82f08391"),
         Entry("mms-q8", "MMS-300M ONNX (INT8)", "mms-q8", MMS_LICENSE, MMS_SOURCE,
-              reference_bytes=356_289_622),
+              reference_bytes=356_289_622,
+              reference_sha256="bef3271b8f4496fd173da1d2392c4bc7d496e0245cf1e8700481f812795b4abe"),
         Entry("hubert-ja-q4", "Japanese HuBERT v4 ONNX (INT4)", "hubert-ja-q4", "Apache-2.0",
-              HUBERT_SOURCE, reference_bytes=63_010_793),
+              HUBERT_SOURCE, reference_bytes=63_010_793,
+              reference_sha256="0151f5bd899a86aab0d34c06dba74689e60a95e6dce0a6642b6c005b74aef630"),
         Entry("pyshiro", "pyshiro / SHIRO Japanese singing HSMM", "research",
               "GPL-3.0 (code); separate checkpoint", "https://github.com/wavtechyukky/pyshiro"),
         Entry("qwen3", "Qwen3-ForcedAligner-0.6B", "research", "Apache-2.0",
@@ -142,6 +168,9 @@ class Catalog:
         builtin = BUILT_INS.get(model_id)
         if builtin and builtin.profile != profile:
             raise AlignmentError("This identifier is reserved for the corresponding built-in profile.")
+        if builtin and builtin.reference_sha256 and (
+                path.stat().st_size != builtin.reference_bytes or sha256(path) != builtin.reference_sha256):
+            raise AlignmentError("The file does not match this preset. Register a compatible variant with a custom ID.")
         if not builtin and (not name.strip() or not license.strip() or not source.strip()):
             raise AlignmentError("Enter the name, license and source of the custom export.")
         entry = (replace(builtin, path=str(path)) if builtin else

@@ -29,7 +29,7 @@ ALIGNMENT_LAB_PYTHON="$PWD/tools/alignment-lab/.venv/bin/python" ./build/alignme
 ```
 
 「Models」でプリセットに ONNX を指定するか、互換エクスポートを名前・ライセンス・出典付きで
-追加します。削除は登録を解除します。ライセンスが異なるエクスポートには新しいIDを付けます。
+追加します。プリセットは配布元の SHA-256 と照合します。削除は登録を解除します。
 CPU、GPU、Auto から選べます。現行 GPU 経路は FP32 の ONNX Runtime CUDA です。
 利用する場合は CPU 版とは別の Python 環境に `onnxruntime-gpu` と対応する CUDA / cuDNN を
 用意します。プロセス VRAM の計測には NVIDIA NVML とオプションの `nvidia-ml-py` が必要です。
