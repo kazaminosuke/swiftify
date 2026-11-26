@@ -9,10 +9,13 @@
 #include <QStringList>
 #include <QUrl>
 #include <QVariantList>
+#include <QtQml/qqmlregistration.h>
 
 class Lab : public QObject
 {
     Q_OBJECT
+    QML_ELEMENT
+    QML_UNCREATABLE("Owned by the Alignment Lab window.")
     Q_PROPERTY(QVariantList models READ models NOTIFY modelsChanged FINAL)
     Q_PROPERTY(QVariantList reports READ reports NOTIFY reportsChanged FINAL)
     Q_PROPERTY(bool busy READ busy NOTIFY stateChanged FINAL)
