@@ -254,7 +254,6 @@ pub(crate) struct PlayQueue {
     state: Mutex<QueueState>,
 }
 
-#[derive(Default)]
 struct QueueState {
     chunks: VecDeque<PlayedChunk>,
     /// the analysis window being filled, carried from chunk to chunk as the
@@ -263,6 +262,16 @@ struct QueueState {
     /// chunks played out, for the writing thread to free: freeing them on
     /// the device's thread had it handing memory back to the system there
     spent: Vec<PlayedChunk>,
+}
+
+impl Default for QueueState {
+    fn default() -> Self {
+        Self {
+            chunks: VecDeque::new(),
+            window: AnalysisWindow::default(),
+            spent: Vec::with_capacity(SpectrumSink::QUEUE_HIGH_WATER * 2),
+        }
+    }
 }
 
 impl PlayQueue {
@@ -293,27 +302,25 @@ impl PlayQueue {
     /// fills interleaved stereo from the front of the queue, and silence once
     /// it runs out
     pub(crate) fn fill(&self, out: &mut [f32]) {
+        let Ok(mut state) = self.state.try_lock() else {
+            out.fill(0.0);
+            return;
+        };
+        let QueueState { chunks, window, spent } = &mut *state;
         let mut written = 0;
-        {
-            let mut state = self.state();
-            let QueueState {
-                chunks,
-                window,
-                spent,
-            } = &mut *state;
-            while written < out.len() {
-                let Some(front) = chunks.front_mut() else {
-                    break;
-                };
-                written += front.fill(&mut out[written..], window);
-                if front.is_done()
-                    && let Some(played) = chunks.pop_front()
-                {
-                    spent.push(played);
-                }
+        while written < out.len() && spent.len() < spent.capacity() {
+            let Some(front) = chunks.front_mut() else {
+                break;
+            };
+            written += front.fill(&mut out[written..], window);
+            if front.is_done()
+                && let Some(played) = chunks.pop_front()
+            {
+                spent.push(played);
             }
         }
         out[written..].fill(0.0);
+
     }
 }
 
@@ -1147,6 +1154,15 @@ mod tests {
                 (range.lower_bin..=range.upper_bin).contains(&bin)
             })
             .expect("frequency should be covered by the visualizer")
+    }
+
+    #[test]
+    fn spotify_device_callback_does_not_wait_for_its_writer() {
+        let queue = PlayQueue::default();
+        let _writer = queue.state();
+        let mut samples = [1.0; 8];
+        queue.fill(&mut samples);
+        assert_eq!(samples, [0.0; 8]);
     }
 
     #[test]
