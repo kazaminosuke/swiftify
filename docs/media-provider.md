@@ -25,3 +25,18 @@ Music requests or login are made by this layer.
 
 - 2026-11-20 19:14. Official App Server returned HTTP 401 after catalogue and
   provider implementation. No remaining-usage percentage was available.
+
+## Cancellation and seek failures
+
+Providers can retain the per-reader `MediaCancellation` token passed to
+`open_cancellable`. The player sets it before joining the previous decoder
+after stop, successful replacement or drop. Readers wrapping remote I/O
+must check the token during waits, wake on cancellation or enforce deadlines.
+Provider open, format probing and seek preparation still run on the control
+thread. Callers that need a responsive UI should use a worker for those
+operations. A fresh candidate has its own token, so a rejected seek keeps
+the active reader.
+
+The player distinguishes provider open errors, input read errors and byte
+seek errors. A codec seek failure without a recorded I/O error remains a
+decoder seek error. Provider error messages stay out of these results.
