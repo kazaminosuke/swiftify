@@ -44,13 +44,20 @@ against the current code and tests.
   The core C ABI library suite passed 76 tests with one opt-in benchmark ignored.
 - Qt 6.10.3 on Linux. The combined catalogue and audio stacks passed the
   playback, local library, catalogue, OAuth, QML, translation and icon
-  checks. Both app modes opened offscreen and repeat launches forwarded
-  to their own instance. Linux desktop integration was disabled for this
-  build. Staged installation contained the GPL, Qt and YouTube notices and
-  the Rust notice for Symphonia Vorbis 0.6.1.
+  checks. The full Xvfb CTest run passed 22 of 23 suites. The four
+  `filledIconsHaveNoHoles` data rows and
+  `aNarrowWindowClosesItsRightPanels` failed with identical messages on
+  upstream `51dd3ef` in the same X11/Qt environment. The upstream comparison
+  built without the QML cache generator. The earlier offscreen run also
+  failed to initialize a GL context for `tst_views`. Both app modes opened
+  offscreen and repeat launches forwarded to their own instance. Linux
+  desktop integration was disabled for this build. Staged installation
+  contained the GPL, Qt and YouTube notices and the Rust notice for
+  Symphonia Vorbis 0.6.1.
 - A C ABI probe played generated Vorbis/WebM with EQ and 1.25× tempo.
   It confirmed duration, a paused seek that holds its position, resume
-  and explicit output restart through ALSA. Actual Google consent,
+  and explicit output restart through ALSA in five consecutive runs.
+  Actual Google consent,
   Windows/macOS, hardware output changes and acoustic lyric latency
   remain unverified.
 
@@ -67,7 +74,7 @@ audio, queue and provider work and lists the relevant code and model terms.
 ### Codex usage
 
 Official App Server `account/rateLimits/read` returned HTTP 401 at
-startup and on repeat checks, including 20:34, 20:40, 20:45 and 20:53 JST.
+startup and on repeat checks, including 20:34, 20:40, 20:45, 20:53, 20:58 and 21:07 JST.
 No remaining percentage was available.
 
 ## Drafts and dependencies
