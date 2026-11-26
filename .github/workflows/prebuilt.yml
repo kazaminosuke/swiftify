@@ -23,6 +23,14 @@ on:
       - tools/build-windows.ps1
       - tools/build-linux-tarball.sh
       - tools/build-macos-dmg.sh
+      - CMakeLists.txt
+      - src/main.cpp
+      - src/youtube/**
+      - qml/YouTubeWindow.qml
+      - resources/youtube/**
+      - tests/tst_youtube*.cpp
+      - tests/tst_googleauthorization.cpp
+      - tests/check_windows_build.ps1
 
 permissions:
   contents: read
@@ -65,7 +73,7 @@ jobs:
         shell: pwsh
         run: >
           .\tools\build-windows.ps1 -QtPath $env:QT_ROOT_DIR
-          -BuildRoot "$env:RUNNER_TEMP\build"
+          -BuildRoot "$env:RUNNER_TEMP\build" -TestYouTube
           -InstallPrefix "$env:RUNNER_TEMP\${{ steps.version.outputs.name }}"
 
       # msvc's headers have the media controls, so a build without them is a bug
@@ -152,7 +160,7 @@ jobs:
             libpulse-dev libasound2-dev libssl-dev libsecret-1-dev \
             libgl1-mesa-dev libegl1-mesa-dev libxkbcommon-dev libxkbcommon-x11-0 \
             libfontconfig1-dev libfreetype-dev libdbus-1-dev \
-            libwayland-dev libwayland-egl1 libvulkan1 \
+            libwayland-dev libwayland-egl1 libvulkan-dev \
             libxcb-cursor0 libxcb-icccm4 libxcb-image0 libxcb-keysyms1 libxcb-randr0 \
             libxcb-render-util0 libxcb-shape0 libxcb-xinerama0 libxcb-xkb1 libxcb-xinput0
 
@@ -173,7 +181,7 @@ jobs:
           CXX: clang++-18
           CFLAGS: --gcc-install-dir=/usr/lib/gcc/x86_64-linux-gnu/12
           CXXFLAGS: --gcc-install-dir=/usr/lib/gcc/x86_64-linux-gnu/12
-        run: ./tools/build-linux-tarball.sh --qt "$QT_ROOT_DIR" --out dist
+        run: ./tools/build-linux-tarball.sh --qt "$QT_ROOT_DIR" --out dist --test-youtube
 
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
@@ -182,6 +190,7 @@ jobs:
           if-no-files-found: error
 
   macos:
+    if: github.event_name != 'pull_request'
     # apple silicon with xcode 27. the icon uses icon composer features xcode
     # 26's actool can't open. the image is still a preview
     runs-on: xcode-27
