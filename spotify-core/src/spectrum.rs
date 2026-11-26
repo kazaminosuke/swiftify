@@ -289,12 +289,14 @@ impl PlayQueue {
     /// leaving the device's thread the list `spent` was (emptied, its room
     /// kept) to fill again
     fn push(&self, chunk: PlayedChunk, spent: &mut Vec<PlayedChunk>) {
+        // Free retired packets on the writer before recycling their buffer.
+        spent.clear();
         let mut state = self.state();
         state.chunks.push_back(chunk);
         // The device can finish every queued packet before the next write.
         // Size the recycled buffer here, where allocation is permitted.
         let capacity = state.chunks.len().max(SpectrumSink::QUEUE_HIGH_WATER * 2);
-        spent.reserve(capacity.saturating_sub(spent.len()));
+        spent.reserve(capacity);
         std::mem::swap(&mut state.spent, spent);
     }
 
