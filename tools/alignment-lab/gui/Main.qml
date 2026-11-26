@@ -1,12 +1,14 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+pragma ComponentBehavior: Bound
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Dialogs
 import QtQuick.Layouts
+import Swiftify.AlignmentLab
 
 ApplicationWindow {
     id: window
-    required property QtObject lab
+    required property Lab lab
     property url audioFile
     property url referenceFile
     property var comparisonIds: []
