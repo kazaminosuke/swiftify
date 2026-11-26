@@ -679,10 +679,11 @@ private slots:
 
     void ttmlUsesRelativeWordTimesAndRoundTripsLocalEdits()
     {
-        const QString source = QStringLiteral(R"(
-            <tt xmlns="http://www.w3.org/ns/ttml"><body><div begin="1s">
-                <p begin="500ms" dur="3s"><span begin="0s" end="500ms">歌</span> <span begin="1s" end="2s">う</span></p>
-            </div></body></tt>)");
+        const QString source = QStringLiteral(
+            "<tt xmlns=\"http://www.w3.org/ns/ttml\"><body><div begin=\"1s\">"
+            "<p begin=\"500ms\" dur=\"3s\"><span begin=\"0s\" end=\"500ms\">歌</span> "
+            "<span begin=\"1s\" end=\"2s\">う</span></p>"
+            "</div></body></tt>");
         auto lyrics = Lyrics::fromTtml(source);
         QVERIFY(lyrics.has_value());
         QCOMPARE(lyrics->lines[0].startTimeMs, 1500u);
@@ -701,11 +702,11 @@ private slots:
 
     void appleTtmlUsesTrackRelativeWordTimes()
     {
-        const auto lyrics = Lyrics::fromTtml(QStringLiteral(R"(
-            <tt xmlns="http://www.w3.org/ns/ttml" xmlns:itunes="http://music.apple.com/lyric-ttml-internal">
-                <body><div><p begin="0:04.500" end="0:06.500">
-                    <span begin="0:05.000" end="0:05.750">声</span></p></div></body>
-            </tt>)"));
+        const auto lyrics = Lyrics::fromTtml(QStringLiteral(
+            "<tt xmlns=\"http://www.w3.org/ns/ttml\" xmlns:itunes=\"http://music.apple.com/lyric-ttml-internal\">"
+            "<body><div><p begin=\"0:04.500\" end=\"0:06.500\">"
+            "<span begin=\"0:05.000\" end=\"0:05.750\">声</span>"
+            "</p></div></body></tt>"));
         QVERIFY(lyrics.has_value());
         QCOMPARE(lyrics->lines[0].timings[0].startTimeMs, 5000u);
     }
