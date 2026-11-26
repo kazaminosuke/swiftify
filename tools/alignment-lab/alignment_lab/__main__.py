@@ -156,6 +156,11 @@ def parser():
 
 
 def main():
+    if os.name == "posix" and os.environ.get("ALIGNMENT_LAB_BACKGROUND") == "1":
+        try:
+            os.nice(5)
+        except OSError:
+            pass
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8")
     args = parser().parse_args()
