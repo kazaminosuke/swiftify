@@ -51,13 +51,16 @@ void sortAndFinish(QList<LyricLine> &lines)
     for (qsizetype index = 0; index < lines.size(); ++index) {
         auto &line = lines[index];
         if (line.endTimeMs <= line.startTimeMs) {
-            line.endTimeMs = index + 1 < lines.size() ? lines.at(index + 1).startTimeMs : line.startTimeMs + 5000;
+            const auto nextStart = index + 1 < lines.size() ? lines.at(index + 1).startTimeMs : line.startTimeMs;
+            line.endTimeMs = nextStart > line.startTimeMs ? nextStart : line.startTimeMs + 5000;
         }
         for (qsizetype i = 0; i < line.timings.size(); ++i) {
             auto &word = line.timings[i];
+            word.startTimeMs = std::clamp(word.startTimeMs, line.startTimeMs, line.endTimeMs);
             if (word.endTimeMs <= word.startTimeMs) {
                 word.endTimeMs = i + 1 < line.timings.size() ? line.timings.at(i + 1).startTimeMs : line.endTimeMs;
             }
+            word.endTimeMs = std::clamp(word.endTimeMs, word.startTimeMs, line.endTimeMs);
         }
     }
 }
