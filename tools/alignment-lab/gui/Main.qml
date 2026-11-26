@@ -194,6 +194,13 @@ ApplicationWindow {
                 }
                 Label {
                     Layout.fillWidth: true
+                    wrapMode: Text.Wrap
+                    text: window.selected ? window.selected.terms : ""
+                    visible: text !== ""
+                    opacity: 0.8
+                }
+                Label {
+                    Layout.fillWidth: true
                     elide: Text.ElideMiddle
                     text: window.selected ? window.selected.path : ""
                     visible: text !== ""
