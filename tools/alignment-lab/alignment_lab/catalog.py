@@ -75,7 +75,12 @@ class Entry:
             size = self.model_file.stat().st_size if installed else self.reference_bytes
         except OSError:
             installed, size, status = False, self.reference_bytes, "Model file missing"
-        return asdict(self) | {"installed": installed or self.profile == "heuristic", "status": status,
+        terms = {
+            MMS_LICENSE: "Non-commercial use. Attribution and disclosure of changes are required for redistribution.",
+            "Apache-2.0": "Include the license and applicable notices when redistributing.",
+            "GPL-3.0-or-later (implementation)": "GPL terms apply to distributing the implementation.",
+        }.get(self.license, "See the model source for checkpoint and distribution terms.")
+        return asdict(self) | {"terms": terms, "installed": installed or self.profile == "heuristic", "status": status,
                               "runnable": bool(ffmpeg and (self.profile == "heuristic" or (installed and runtime and languages))),
                               "model_bytes": size, "can_assign": onnx, "languages": languages,
                               "devices": (["auto", "cpu", "gpu"]
