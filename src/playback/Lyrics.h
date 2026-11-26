@@ -26,10 +26,18 @@
 
 namespace swiftify {
 
+struct LyricWord {
+    quint32 startTimeMs = 0;
+    quint32 endTimeMs = 0;
+    qsizetype offset = 0;
+    qsizetype length = 0;
+};
+
 struct LyricLine {
     quint32 startTimeMs = 0;
     quint32 endTimeMs = 0;
     QString words;
+    QList<LyricWord> timings;
 };
 
 /// spotify's color-lyrics, as the core returns them (SpotifyLyrics.swift)
@@ -42,11 +50,16 @@ struct Lyrics {
     static std::optional<Lyrics> fromJson(const QByteArray &json);
     /// an .lrc file's lines: "[01:02.50]words", timed when they carry times
     static std::optional<Lyrics> fromLrc(const QString &text);
-    /// the .lrc kept beside a music file, with the same name
+    static std::optional<Lyrics> fromTtml(const QString &text);
+    static QString editedPath(const QString &musicPath);
+    QByteArray toTtml() const;
+    bool editLine(int index, quint32 start, const QString &text);
+    /// A timed sidecar with the same base name as the recording.
     static std::optional<Lyrics> besideFile(const QString &musicPath);
     /// the line playing at `positionMs`, by binary search. -1 before the first
     /// line, and always for unsynchronised lyrics.
     int lineIndex(qint64 positionMs) const;
+    int wordIndex(int line, qint64 positionMs) const;
 };
 
 class LyricsModel : public QAbstractListModel {
@@ -71,6 +84,7 @@ public:
 
     int count() const { return int(m_lines.size()); }
     void setLines(const QList<LyricLine> &lines);
+    Q_INVOKABLE QString highlightedWords(int row, int word) const;
     quint32 startTimeMs(int row) const { return row >= 0 && row < m_lines.size() ? m_lines.at(row).startTimeMs : 0; }
 
 signals:

@@ -97,6 +97,65 @@ Item {
             enabled: Player.lyricsDelayMs !== 0
             onClicked: Player.lyricsDelayMs = 0
         }
+        IconButton {
+            scheme: root.scheme
+            size: 32
+            iconSize: 18
+            symbol: "edit"
+            text: qsTr("Edit current lyric line")
+            Accessible.name: text
+            visible: Player.canEditLyrics
+            onClicked: editLyrics.openFor(Math.max(0, Player.activeLyricIndex))
+        }
+
+    }
+
+    Dialog {
+        id: editLyrics
+        property int row: -1
+        property string track: ""
+        anchors.centerIn: Overlay.overlay
+        width: Math.min(420, Overlay.overlay ? Overlay.overlay.width - 24 : 420)
+        title: qsTr("Edit lyric line")
+        modal: true
+        standardButtons: Dialog.Cancel
+        contentItem: Column {
+            spacing: 8
+            Label { text: qsTr("Start time (ms)") }
+            TextField {
+                id: editTime
+                width: parent.width
+                inputMethodHints: Qt.ImhDigitsOnly
+                validator: RegularExpressionValidator { regularExpression: /[0-9]{1,10}/ }
+            }
+            Label { text: qsTr("Lyrics") }
+            TextField { id: editText; width: parent.width }
+            Label {
+                width: parent.width
+                text: qsTr("Editing the text clears this line's word timings.")
+                wrapMode: Text.Wrap
+            }
+            Button {
+                text: qsTr("Save")
+                enabled: editTime.acceptableInput && editText.text.trim().length > 0
+                         && Player.canEditLyrics && Player.lyricLineForEditing(editLyrics.row).track === editLyrics.track
+                onClicked: {
+                    if (Player.saveLyricLine(editLyrics.row, editTime.text, editText.text))
+                        editLyrics.close()
+                }
+            }
+        }
+
+        function openFor(row) {
+            const cue = Player.lyricLineForEditing(row)
+            if (cue.track === undefined)
+                return
+            editLyrics.row = row
+            editLyrics.track = cue.track
+            editTime.text = cue.time
+            editText.text = cue.text
+            editLyrics.open()
+        }
     }
 
     ListView {
@@ -200,7 +259,10 @@ Item {
                 id: text
                 width: parent.width
                 transformOrigin: Item.TopLeft
-                text: line.words.length > 0 ? line.words : "♪"
+                readonly property bool wordHighlight: line.active && Player.activeLyricWord >= 0
+                textFormat: wordHighlight ? Text.StyledText : Text.PlainText
+                text: wordHighlight ? Player.lyrics.highlightedWords(line.index, Player.activeLyricWord)
+                                    : line.words.length > 0 ? line.words : "♪"
                 wrapMode: Text.Wrap
                 font.pixelSize: 22
                 font.weight: Font.Bold
@@ -230,7 +292,13 @@ Item {
                 anchors.fill: parent
                 enabled: Player.lyricsSynchronized
                 cursorShape: enabled ? Qt.PointingHandCursor : Qt.ArrowCursor
-                onClicked: Player.seekToLyricLine(line.index)
+                acceptedButtons: Qt.LeftButton | Qt.RightButton
+                onClicked: mouse => {
+                    if (mouse.button === Qt.RightButton && Player.canEditLyrics)
+                        editLyrics.openFor(line.index)
+                    else if (mouse.button === Qt.LeftButton)
+                        Player.seekToLyricLine(line.index)
+                }
             }
         }
 
