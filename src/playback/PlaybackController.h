@@ -270,6 +270,7 @@ private:
     void syncMediaSession();
     void reset();
     void restorePlaybackState();
+    void restoreLyricsDelay();
     void savePlaybackState();
     void schedulePlaybackSave();
     bool isCurrent(const Song &song) const { return m_currentSong && m_currentSong->isSameInstance(song); }

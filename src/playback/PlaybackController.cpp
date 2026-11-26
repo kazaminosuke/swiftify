@@ -25,6 +25,7 @@
 #include "playback/PlaybackState.h"
 
 #include <QCoreApplication>
+#include <QCryptographicHash>
 #include <QLoggingCategory>
 #include <QQmlEngine>
 #include <QRandomGenerator>
@@ -50,6 +51,12 @@ const QString kVolumeKey = QStringLiteral("playerVolume");
 const QString kVolumeBeforeMuteKey = QStringLiteral("playerVolumeBeforeMute");
 const QString kLyricsDelayKey = QStringLiteral("lyricsDelayMs");
 constexpr int kLyricsDelayLimitMs = 10'000;
+
+QString trackLyricsDelayKey(const Song &song)
+{
+    const auto id = QCryptographicHash::hash(song.uri.toUtf8(), QCryptographicHash::Sha256).toHex();
+    return QStringLiteral("trackLyricsDelayMs/") + QString::fromLatin1(id);
+}
 const QString kPlaybackStateKey = QStringLiteral("lastPlaybackState");
 
 /// a restart is offered after this much of a song has played
@@ -104,9 +111,8 @@ PlaybackController::PlaybackController(PlaybackCore *core, SpotifySession *sessi
     });
     connect(m_session, &SpotifySession::loggedOut, this, &PlaybackController::reset);
 
-    m_lyricsDelayMs = std::clamp(m_settings->value(kLyricsDelayKey, 0).toInt(),
-                                -kLyricsDelayLimitMs, kLyricsDelayLimitMs);
     restorePlaybackState();
+    restoreLyricsDelay();
     m_checkpointTimer.setInterval(5000);
     connect(&m_checkpointTimer, &QTimer::timeout, this, &PlaybackController::savePlaybackState);
     m_saveTimer.setSingleShot(true);
@@ -262,6 +268,7 @@ void PlaybackController::setCurrentSong(const std::optional<Song> &song, quint32
     const bool changed = song.has_value() != m_currentSong.has_value()
         || (song && m_currentSong && !song->isSameInstance(*m_currentSong));
     m_currentSong = song;
+    restoreLyricsDelay();
     m_crossfadeMs = crossfadeMs;
     m_crossfadeDeadline.setRemainingTime(qint64(crossfadeMs));
     if (changed) {
@@ -1364,6 +1371,19 @@ QCoro::Task<> PlaybackController::runLoadLyrics(Song song, CancelToken token)
     updateActiveLyricLine();
 }
 
+void PlaybackController::restoreLyricsDelay()
+{
+    const QVariant fallback = m_settings->value(kLyricsDelayKey, 0);
+    const int saved = m_currentSong
+        ? m_settings->value(trackLyricsDelayKey(*m_currentSong), fallback).toInt()
+        : fallback.toInt();
+    const int delay = std::clamp(saved, -kLyricsDelayLimitMs, kLyricsDelayLimitMs);
+    if (m_lyricsDelayMs != delay) {
+        m_lyricsDelayMs = delay;
+        emit lyricsDelayChanged();
+    }
+}
+
 void PlaybackController::setLyricsDelayMs(int delayMs)
 {
     const int delay = std::clamp(delayMs, -kLyricsDelayLimitMs, kLyricsDelayLimitMs);
@@ -1371,7 +1391,8 @@ void PlaybackController::setLyricsDelayMs(int delayMs)
         return;
     }
     m_lyricsDelayMs = delay;
-    m_settings->setValue(kLyricsDelayKey, delay);
+    const QString key = m_currentSong ? trackLyricsDelayKey(*m_currentSong) : kLyricsDelayKey;
+    m_settings->setValue(key, delay);
     emit lyricsDelayChanged();
     updateActiveLyricLine();
 }
