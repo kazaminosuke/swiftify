@@ -1,12 +1,11 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 use std::{
-    collections::VecDeque,
     error::Error,
     fmt, io,
     path::Path,
     sync::{
-        Arc, Condvar, Mutex, MutexGuard, PoisonError,
+        Arc, Mutex, MutexGuard, PoisonError,
         atomic::{AtomicBool, Ordering},
     },
     thread::{self, JoinHandle},
@@ -23,11 +22,10 @@ use crate::{
     decode::open_media,
     device::{OutputDevice, open_device_stream, open_stereo_stream},
     media::{FileMedia, MediaCancellation, MediaProvider, ReadFailure},
+    render::{PcmFrame, RenderQueue, frame_time},
 };
 
 const CHANNELS: usize = 2;
-const DECODE_SAMPLES: usize = 2_048;
-const CLOCK_SPANS: usize = 64;
 
 /// Engine states reported by [Player::snapshot].
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -135,7 +133,7 @@ impl Player {
                 let timestamp = timing.timestamp();
                 let latency = timestamp.playback.duration_since(&timestamp.callback);
                 let gain = if slot.muted { 0.0 } else { slot.volume };
-                buffer.render(output, gain, Instant::now(), latency, slot.rate);
+                buffer.render(output, gain, Instant::now(), latency);
             }
         };
         let error = move |_| failed.store(true, Ordering::Release);
@@ -144,7 +142,6 @@ impl Player {
             None => open_stereo_stream(fill, error),
         }
         .ok_or(AudioError::OpenOutput)?;
-        lock(&slot).rate = rate;
 
         Ok(Self {
             stream,
@@ -234,9 +231,7 @@ impl Player {
         if let Some(paused_at) = self.paused_at {
             self.stream.play().map_err(AudioError::PlayOutput)?;
             if let Some(track) = &self.track {
-                lock(&track.buffer.queue)
-                    .clock
-                    .resume(paused_at, Instant::now());
+                track.buffer.resume(paused_at, Instant::now());
             }
             lock(&self.slot).running = true;
             self.paused_at = None;
@@ -317,34 +312,37 @@ impl Player {
                 input_error: None,
             };
         };
-        let queued = lock(&track.buffer.queue);
-        let now = Instant::now();
-        let to_position = |frames| {
-            let position = track.offset.saturating_add(frame_time(frames, self.rate));
+        let queued = track.buffer.position(self.paused_at);
+        let clamp = |position: Duration| {
             track
                 .duration
                 .map_or(position, |duration| position.min(duration))
         };
+        let state = if output_lost {
+            State::OutputLost
+        } else if queued.drained {
+            if queued.input_error.is_some() {
+                State::SourceFailed
+            } else {
+                State::Ended
+            }
+        } else if self.paused_at.is_some() {
+            State::Paused
+        } else if queued.exhausted {
+            State::Draining
+        } else if queued.starved {
+            State::Buffering
+        } else {
+            State::Playing
+        };
         Snapshot {
-            state: if output_lost {
-                State::OutputLost
-            } else {
-                queued.state(self.paused_at, now)
-            },
-            submitted_position: to_position(queued.clock.submitted_frames),
-            audible_position: if output_lost {
-                None
-            } else {
-                queued
-                    .clock
-                    .audible_frames(self.paused_at.unwrap_or(now), self.rate)
-                    .map(to_position)
-            },
-            output_latency: if output_lost {
-                None
-            } else {
-                queued.clock.latency
-            },
+            state,
+            submitted_position: clamp(queued.submitted),
+            audible_position: (!output_lost)
+                .then_some(queued.audible)
+                .flatten()
+                .map(clamp),
+            output_latency: (!output_lost).then_some(queued.latency).flatten(),
             timeline_revision: self.revision,
             duration: track.duration,
             input_error: queued.input_error,
@@ -372,16 +370,14 @@ struct RenderSlot {
     running: bool,
     volume: f32,
     muted: bool,
-    rate: u32,
-    buffer: Option<Arc<Buffer>>,
+    buffer: Option<Arc<RenderQueue>>,
 }
 
 struct Track {
     provider: Arc<dyn MediaProvider>,
     cancellation: MediaCancellation,
     duration: Option<Duration>,
-    offset: Duration,
-    buffer: Arc<Buffer>,
+    buffer: Arc<RenderQueue>,
     decoder: Option<JoinHandle<()>>,
 }
 
@@ -414,20 +410,37 @@ impl Track {
                 return Err(AudioError::InputRead(kind));
             }
         }
-        let source = UniformSourceIterator::new(decoder, CHANNELS as u16, rate);
-        let capacity = (rate as usize * CHANNELS / 4).max(DECODE_SAMPLES * 2);
-        let buffer = Arc::new(Buffer::new(capacity));
+        let mut source = UniformSourceIterator::new(decoder, CHANNELS as u16, rate);
+        let buffer = Arc::new(RenderQueue::new(rate, rate as usize / 4, offset));
         let output = Arc::clone(&buffer);
         let decoder = thread::Builder::new()
             .name("swiftify-native-decoder".to_owned())
-            .spawn(move || output.decode(source, capacity, failure))
+            .spawn(move || {
+                let mut frames = 0;
+                output.produce(
+                    |target| {
+                        let mut count = 0;
+                        for frame in target {
+                            let Some(left) = source.next() else { break };
+                            let Some(right) = source.next() else { break };
+                            frames += 1;
+                            *frame = PcmFrame {
+                                stereo: [left, right],
+                                media_end: offset.saturating_add(frame_time(frames, rate)),
+                            };
+                            count += 1;
+                        }
+                        count
+                    },
+                    || failure.kind(),
+                );
+            })
             .map_err(AudioError::DecoderThread)?;
 
         Ok(Self {
             provider,
             cancellation,
             duration,
-            offset,
             buffer,
             decoder: Some(decoder),
         })
@@ -437,8 +450,7 @@ impl Track {
 impl Drop for Track {
     fn drop(&mut self) {
         self.cancellation.cancel();
-        lock(&self.buffer.queue).cancelled = true;
-        self.buffer.space.notify_one();
+        self.buffer.cancel();
         if let Some(decoder) = self.decoder.take() {
             let _ = decoder.join();
         }
@@ -449,217 +461,6 @@ fn input_failure(read: &ReadFailure, seek: &ReadFailure) -> Option<AudioError> {
     read.kind()
         .map(AudioError::InputRead)
         .or_else(|| seek.kind().map(AudioError::InputSeek))
-}
-
-struct Buffer {
-    queue: Mutex<Queue>,
-    space: Condvar,
-}
-
-struct Queue {
-    samples: VecDeque<f32>,
-    finished: bool,
-    input_error: Option<io::ErrorKind>,
-    cancelled: bool,
-    starved: bool,
-    clock: AudioClock,
-}
-
-impl Queue {
-    fn state(&self, paused_at: Option<Instant>, now: Instant) -> State {
-        let exhausted = self.finished && self.samples.is_empty();
-        if exhausted
-            && self
-                .clock
-                .spans
-                .back()
-                .is_none_or(|span| span.end <= paused_at.unwrap_or(now))
-        {
-            if self.input_error.is_some() {
-                State::SourceFailed
-            } else {
-                State::Ended
-            }
-        } else if paused_at.is_some() {
-            State::Paused
-        } else if exhausted {
-            State::Draining
-        } else if self.starved {
-            State::Buffering
-        } else {
-            State::Playing
-        }
-    }
-}
-
-impl Buffer {
-    fn new(capacity: usize) -> Self {
-        Self {
-            queue: Mutex::new(Queue {
-                samples: VecDeque::with_capacity(capacity),
-                finished: false,
-                input_error: None,
-                cancelled: false,
-                starved: true,
-                clock: AudioClock::new(),
-            }),
-            space: Condvar::new(),
-        }
-    }
-
-    fn decode(&self, mut source: impl Iterator<Item = f32>, capacity: usize, failure: ReadFailure) {
-        let mut decoded = [0.0; DECODE_SAMPLES];
-        loop {
-            let queue = self
-                .space
-                .wait_while(lock(&self.queue), |q| {
-                    !q.cancelled && q.samples.len() + DECODE_SAMPLES > capacity
-                })
-                .unwrap_or_else(PoisonError::into_inner);
-            if queue.cancelled {
-                return;
-            }
-            drop(queue);
-
-            let mut samples = 0;
-            let (frames, _) = decoded.as_chunks_mut::<CHANNELS>();
-            for frame in frames {
-                let Some(left) = source.next() else { break };
-                let Some(right) = source.next() else { break };
-                *frame = [left, right];
-                samples += CHANNELS;
-            }
-
-            let mut queue = lock(&self.queue);
-            if queue.cancelled {
-                return;
-            }
-            queue.samples.extend(decoded[..samples].iter().copied());
-            if samples < DECODE_SAMPLES {
-                queue.finished = true;
-                queue.input_error = failure.kind();
-                return;
-            }
-        }
-    }
-
-    /// Called with a zeroed stereo output slice. A busy queue leaves silence,
-    /// and never makes the device callback wait for the decoder.
-    fn render(
-        &self,
-        output: &mut [f32],
-        volume: f32,
-        at: Instant,
-        latency: Option<Duration>,
-        rate: u32,
-    ) {
-        let Ok(mut queue) = self.queue.try_lock() else {
-            return;
-        };
-        let count = output.len().min(queue.samples.len()) / CHANNELS * CHANNELS;
-        for (out, sample) in output.iter_mut().zip(queue.samples.drain(..count)) {
-            *out = if volume == 0.0 { 0.0 } else { sample * volume };
-        }
-        if count != 0 {
-            queue
-                .clock
-                .submit((count / CHANNELS) as u64, at, latency, rate);
-        }
-        queue.starved = count < output.len() && !queue.finished;
-        drop(queue);
-        if count != 0 {
-            self.space.notify_one();
-        }
-    }
-}
-
-/// A bounded history of output buffers. There are no growing allocations on
-/// the device callback and gaps in real PCM do not advance the media clock.
-struct AudioClock {
-    submitted_frames: u64,
-    latency: Option<Duration>,
-    spans: VecDeque<SubmittedSpan>,
-}
-
-struct SubmittedSpan {
-    first: u64,
-    frames: u64,
-    start: Instant,
-    end: Instant,
-    estimated: bool,
-}
-
-impl AudioClock {
-    fn new() -> Self {
-        Self {
-            submitted_frames: 0,
-            latency: None,
-            spans: VecDeque::with_capacity(CLOCK_SPANS),
-        }
-    }
-
-    fn submit(&mut self, frames: u64, at: Instant, latency: Option<Duration>, rate: u32) {
-        let estimate = latency.and_then(|delay| at.checked_add(delay));
-        let proposed = estimate.unwrap_or(at);
-        // Adjacent buffers cannot be presented out of media order, even if
-        // the backend's timestamp estimate fluctuates at callback boundaries.
-        let start = self
-            .spans
-            .back()
-            .map_or(proposed, |span| span.end.max(proposed));
-        let end = start.checked_add(frame_time(frames, rate)).unwrap_or(start);
-        if self.spans.len() == CLOCK_SPANS {
-            self.spans.pop_front();
-        }
-        self.spans.push_back(SubmittedSpan {
-            first: self.submitted_frames,
-            frames,
-            start,
-            end,
-            estimated: estimate.is_some(),
-        });
-        self.submitted_frames = self.submitted_frames.saturating_add(frames);
-        self.latency = latency.filter(|_| estimate.is_some());
-    }
-
-    fn audible_frames(&self, at: Instant, rate: u32) -> Option<u64> {
-        let span = self.spans.iter().rev().find(|span| span.start <= at)?;
-        if !span.estimated {
-            return None;
-        }
-        let frames = if at >= span.end {
-            span.frames
-        } else {
-            let elapsed = at.duration_since(span.start);
-            let frames = elapsed.as_nanos() * u128::from(rate) / 1_000_000_000;
-            frames.min(u128::from(span.frames)) as u64
-        };
-        Some(span.first.saturating_add(frames))
-    }
-
-    fn resume(&mut self, paused_at: Instant, resumed_at: Instant) {
-        let paused_for = resumed_at.saturating_duration_since(paused_at);
-        for span in self
-            .spans
-            .iter_mut()
-            .rev()
-            .take_while(|span| span.end > paused_at)
-        {
-            if let (Some(start), Some(end)) = (
-                span.start.checked_add(paused_for),
-                span.end.checked_add(paused_for),
-            ) {
-                span.start = start;
-                span.end = end;
-            }
-        }
-    }
-}
-
-fn frame_time(frames: u64, rate: u32) -> Duration {
-    let rate = u64::from(rate);
-    Duration::from_secs(frames / rate)
-        + Duration::from_nanos((frames % rate) * 1_000_000_000 / rate)
 }
 
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -771,135 +572,5 @@ mod tests {
             input_failure(&read, &seek),
             Some(AudioError::InputRead(io::ErrorKind::TimedOut))
         ));
-    }
-
-    #[test]
-    fn muted_frames_advance_the_clock_and_output_silence() {
-        let buffer = Buffer::new(32);
-        lock(&buffer.queue).samples.extend([0.5, f32::NAN]);
-        let mut output = [1.0; 2];
-        buffer.render(&mut output, 0.0, Instant::now(), None, 48_000);
-        assert_eq!(output, [0.0; 2]);
-        assert_eq!(lock(&buffer.queue).clock.submitted_frames, 1);
-    }
-
-    #[test]
-    fn a_failed_input_does_not_report_natural_end() {
-        let buffer = Buffer::new(DECODE_SAMPLES * 2);
-        let failure = ReadFailure::default();
-        failure.record(io::ErrorKind::TimedOut);
-        buffer.decode(std::iter::empty(), DECODE_SAMPLES * 2, failure);
-        let queue = lock(&buffer.queue);
-        assert_eq!(queue.state(None, Instant::now()), State::SourceFailed);
-        assert_eq!(queue.input_error, Some(io::ErrorKind::TimedOut));
-    }
-
-    #[test]
-    fn silence_does_not_advance_the_submitted_clock() {
-        let buffer = Buffer::new(DECODE_SAMPLES * 2);
-        lock(&buffer.queue).samples.extend([0.5, -0.25, 1.0, -1.0]);
-        let mut output = [0.0; 8];
-
-        buffer.render(
-            &mut output,
-            0.5,
-            Instant::now(),
-            Some(Duration::ZERO),
-            48_000,
-        );
-        assert_eq!(output, [0.25, -0.125, 0.5, -0.5, 0.0, 0.0, 0.0, 0.0]);
-        let queue = lock(&buffer.queue);
-        assert!(queue.starved);
-        assert_eq!(queue.clock.submitted_frames, 2);
-    }
-
-    #[test]
-    fn audio_callback_does_not_wait_for_a_busy_queue() {
-        let buffer = Buffer::new(DECODE_SAMPLES * 2);
-        let mut queue = lock(&buffer.queue);
-        queue.samples.extend([1.0, 1.0]);
-        let mut output = [0.0; 2];
-
-        buffer.render(
-            &mut output,
-            1.0,
-            Instant::now(),
-            Some(Duration::ZERO),
-            48_000,
-        );
-        assert_eq!(output, [0.0; 2]);
-        assert_eq!(queue.clock.submitted_frames, 0);
-        assert_eq!(queue.samples.len(), 2);
-    }
-
-    #[test]
-    fn end_waits_for_the_last_submitted_frame() {
-        let buffer = Buffer::new(DECODE_SAMPLES * 2);
-        {
-            let mut queue = lock(&buffer.queue);
-            queue.samples.extend([1.0, -1.0]);
-            queue.finished = true;
-        }
-        let start = Instant::now() + Duration::from_millis(40);
-        buffer.render(&mut [0.0; 2], 1.0, start, Some(Duration::ZERO), 48_000);
-
-        let queue = lock(&buffer.queue);
-        let end = start + frame_time(1, 48_000);
-        assert_eq!(queue.state(None, start), State::Draining);
-        assert_eq!(queue.state(Some(start), end), State::Paused);
-        assert_eq!(queue.state(None, end), State::Ended);
-    }
-
-    #[test]
-    fn audible_clock_waits_for_output_and_stops_across_an_underrun() {
-        let now = Instant::now();
-        let mut clock = AudioClock::new();
-        clock.submit(4, now, Some(Duration::from_millis(10)), 1_000);
-        clock.submit(
-            6,
-            now + Duration::from_millis(20),
-            Some(Duration::ZERO),
-            1_000,
-        );
-        assert_eq!(
-            clock.audible_frames(now + Duration::from_millis(9), 1_000),
-            None
-        );
-        assert_eq!(
-            clock.audible_frames(now + Duration::from_millis(12), 1_000),
-            Some(2)
-        );
-        assert_eq!(
-            clock.audible_frames(now + Duration::from_millis(18), 1_000),
-            Some(4)
-        );
-        assert_eq!(
-            clock.audible_frames(now + Duration::from_millis(23), 1_000),
-            Some(7)
-        );
-    }
-
-    #[test]
-    fn resuming_preserves_audible_progress_at_the_pause_boundary() {
-        let now = Instant::now();
-        let mut clock = AudioClock::new();
-        clock.submit(20, now, Some(Duration::from_millis(10)), 1_000);
-        let paused = now + Duration::from_millis(15);
-        let resumed = now + Duration::from_millis(60);
-        assert_eq!(clock.audible_frames(paused, 1_000), Some(5));
-        clock.resume(paused, resumed);
-        assert_eq!(clock.audible_frames(resumed, 1_000), Some(5));
-        assert_eq!(
-            clock.audible_frames(resumed + Duration::from_millis(3), 1_000),
-            Some(8)
-        );
-    }
-
-    #[test]
-    fn converts_submitted_frames_without_millisecond_rounding() {
-        assert_eq!(
-            frame_time(48_001, 48_000),
-            Duration::from_nanos(1_000_020_833)
-        );
     }
 }

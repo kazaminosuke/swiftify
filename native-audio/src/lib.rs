@@ -19,3 +19,5 @@ pub use device::{OutputDevice, output_devices};
 
 #[cfg(feature = "player")]
 pub use player::{AudioError, Player, Snapshot, State};
+
+pub mod render;

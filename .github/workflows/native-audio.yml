@@ -47,6 +47,7 @@ jobs:
         run: |
           printf 'pcm.!default { type null }\n' > "$RUNNER_TEMP/swiftify-alsa.conf"
           ALSA_CONFIG_PATH="$RUNNER_TEMP/swiftify-alsa.conf" cargo +stable test --locked --manifest-path native-audio/Cargo.toml --test device -- --ignored
+          ALSA_CONFIG_PATH="$RUNNER_TEMP/swiftify-alsa.conf" cargo +stable test --locked --manifest-path spotify-core/Cargo.toml --no-default-features --features capi --lib local_clock_tracks_dsp_and_paused_async_seek -- --ignored
 
       - name: Test the core including the C ABI and DSP
         run: cargo +stable test --locked --manifest-path spotify-core/Cargo.toml --no-default-features --features capi --lib
