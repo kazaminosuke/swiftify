@@ -8,6 +8,7 @@ include(GNUInstallDirs)
 
 qt_add_executable(alignment-lab gui/main.cpp gui/Lab.cpp gui/Lab.h)
 target_compile_features(alignment-lab PRIVATE cxx_std_20)
+target_include_directories(alignment-lab PRIVATE gui)
 target_link_libraries(alignment-lab PRIVATE Qt6::Core Qt6::Gui Qt6::Qml Qt6::Quick Qt6::QuickControls2)
 qt_add_qml_module(alignment-lab
     URI Swiftify.AlignmentLab
@@ -60,7 +61,7 @@ if(BUILD_TESTING)
         target_compile_features(tst_alignment_worker PRIVATE cxx_std_20)
         target_include_directories(tst_alignment_worker PRIVATE gui)
         target_compile_definitions(tst_alignment_worker PRIVATE ALIGNMENT_LAB_DATA_DIR="${alignment_lab_data_dir}")
-        target_link_libraries(tst_alignment_worker PRIVATE Qt6::Core Qt6::Test)
+        target_link_libraries(tst_alignment_worker PRIVATE Qt6::Core Qt6::Qml Qt6::Test)
         add_dependencies(tst_alignment_worker alignment-lab-backend)
         add_test(NAME alignment_worker COMMAND tst_alignment_worker)
     endif()
