@@ -26,23 +26,31 @@ review did not build the Android app or call its online providers.
   integer, and it copies no lyric text. The user controls the source files.
 - **LRCLIB and Unison** have repository adapters. LRCLIB documents public
   search and retrieval plus newer word timing. Client/API availability and
-  publication rights for the returned lyrics need separate checks. Confirm
-  provider terms before enabling persistent caching, tagging or export.
-  Unison requires its own access and reuse review. [Registry][builtins] ·
-  [LRCLIB API][lrclib]
+  publication rights for the returned lyrics need separate checks. Unison
+  uses the Unison Community License for newer datasets and API use. Its
+  published terms cover eligible public open-source projects when Unison
+  lyrics are free to their users. They require linked Unison and submitter
+  attribution for API display and document ETag revalidation.
+  [Registry][builtins] · [LRCLIB API][lrclib] · [Unison terms][unison]
 - **PetitLyrics, KuGou, Kugeci, QQ Music, NetEase and Followlyrics** have
   implemented catalog clients. **Uta-Net, UtaTen, J-Lyric, JOYSOUND and
   myTyping** use provider-specific lookup/scrape routes. **Genius** uses search
   and a page parser. Each route needs authorization for automated access,
   display, caching, derived timing and export before adoption. The upstream
   code demonstrates the routes. Its GPL covers its implementation.
-  [Registry][builtins] · [Web clients][webclients] · [Genius adapter][genius]
+  PetitLyrics and Uta-Net publish their own usage terms. Tencent requires
+  the product-specific agreements for QQ Music and KuGou. For the other
+  adapters in this group, the review did not establish conditions permitting
+  a third-party client. [Registry][builtins] · [Web clients][webclients] ·
+  [Genius adapter][genius] · [PetitLyrics terms][petit] · [Uta-Net terms][utanet]
+  · [Tencent agreement][tencent]
 - **lrc.red, BiniLyrics, BetterLyrics, BetterLyrics Portato, LyricsPlus and
   PaxSenix** include intermediary routes. **Musixmatch and Spotify** are
   accessed directly or through provider-specific adapters. Check both the
   operator's terms and the underlying lyric rights. A proxy API key controls
   access to that API. Apple MusicKit use is subject to Apple's agreement.
-  [Registry][builtins] · [Apple developer agreement][apple]
+  [Registry][builtins] · [Apple developer agreement][apple] ·
+  [Spotify developer policy][spotify]
 - **YouTube captions and YouTube Music lyrics** use the playing video ID.
   Availability is separate from permission to fetch or republish track
   lyrics. The existing Swiftify YouTube Data API OAuth scope is for a
@@ -97,12 +105,14 @@ before implementing playback. [Policies][ytpolicy]
   [Analyzer notices][analyzer] · [Search adapter attribution][builtins]
 - Dependency terms are independent. AndroidX Media3, Ktor and QuickJS KT are
   Apache-2.0, jsoup and AutoEq code are MIT, and the Kotlin TagLib wrapper is
-  Apache-2.0. The native TagLib library has LGPL and MPL licensing routes.
-  NewPipeExtractor and InnerTubeX publish GPL-3.0. The exact artifact and
-  transitive NOTICEs require review if a future patch imports one of them.
+  Apache-2.0. ONNX Runtime Android 1.28.0 declares MIT in its published POM.
+  TagLib offers LGPL-2.1 and MPL-1.1 terms. A port would need a compatible
+  licensing route. NewPipeExtractor and InnerTubeX publish GPL-3.0. The
+  exact artifact and transitive NOTICEs require review before importing
+  code, including the pinned nanojson fork and native runtime components.
   [Media3][media3] · [Ktor][ktor] · [QuickJS KT][quickjs] · [jsoup][jsoup] ·
   [AutoEq license][autoeqlicense] · [TagLib wrapper][tagwrap] · [TagLib][taglib] ·
-  [NewPipeExtractor][newpipe] · [InnerTubeX][inner]
+  [ONNX Android POM][onnx] · [NewPipeExtractor][newpipe] · [InnerTubeX][inner]
 - The forced-alignment ONNX model card declares **CC BY-NC 4.0**. Runtime
   licensing does not grant model redistribution rights. The FFmpeg fallback
   needs a build-specific codec and license review. Automix and Music2Emo
@@ -211,3 +221,10 @@ before implementing playback. [Policies][ytpolicy]
 [gpl]: https://www.gnu.org/licenses/license-compatibility.html
 [apache]: https://www.apache.org/licenses/GPL-compatibility
 [mpl]: https://www.mozilla.org/MPL/2.0/
+
+[unison]: https://github.com/better-lyrics/unison/blob/master/LICENSE-DATA.md
+[petit]: https://petitlyrics.com/contents/kiyaku
+[utanet]: https://www.uta-net.com/info/kiyaku.html
+[tencent]: https://www.tencentmusic.com/en-us/protocol.html
+[spotify]: https://developer.spotify.com/policy
+[onnx]: https://repo.maven.apache.org/maven2/com/microsoft/onnxruntime/onnxruntime-android/1.28.0/onnxruntime-android-1.28.0.pom
