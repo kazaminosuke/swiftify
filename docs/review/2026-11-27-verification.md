@@ -1,6 +1,9 @@
 # 2026-11-27 修正・検証記録
 
 修正前のコードの参照は [レビュー](2026-11-27.md) にある。
+検証対象の Draft は [歌詞 #13](https://github.com/kazaminosuke/swiftify/pull/13)、
+[再生と時計 #14](https://github.com/kazaminosuke/swiftify/pull/14)、
+[Alignment Lab #15](https://github.com/kazaminosuke/swiftify/pull/15)。
 
 | ID | 対応 |
 | --- | --- |
@@ -8,7 +11,7 @@
 | A06 | #14。既存 Spotify 出力もコールバックで書き込み側を待たず、解放待ち領域を事前確保。クロスフェードのパケット経路は引き続き独立。 |
 | A11・A12 | #14。ローカル EOF のオーバーラップ出力と、Core 単位の出力所有権。 |
 | R01 | #14。既存リサンプラーを解析にも使用し、デバイスレートが変わっても解析レートを維持。 |
-| R02 | #14。既存の長いキューを先に積むテストで検出し、書き込み時の領域確保をキュー全体に合わせた。 |
+| R02 | #14。既存の長いキューを先に積むテストで検出し、書き込み側で解放待ち領域の内容を解放し、キュー全体を収容できる容量で再利用する。 |
 | L01 | #13。Enhanced LRC / TTML、両歌詞パネルでの単語同期、ローカル編集のアトミックな TTML サイドカー。 |
 | Q01 | 既存 #7/#12 の修正を統合検証。 |
 | A07–A10・N01–N04・Q02–Q03 | 残る項目と根拠はレビューの各行を参照。Q03 はヘッドレス条件を含む比較結果を下記に記録。 |
@@ -22,21 +25,23 @@ CPAL が報告するコールバック時刻と提示予定時刻を使い、DSP
 
 ## 実測環境
 
-Debian Linux x86-64、Qt 6.10.3、Rust 1.100.0。仮想 ALSA デバイスを使用。
+Debian 13 Linux x86-64、Qt 6.10.3、Rust 1.100.0。仮想 ALSA デバイスを使用。
 CachyOS / Hyprland の物理出力と体感、Windows/macOS、実アカウントでの OAuth は未検証。
 
 - Rust ネイティブユニット5件、コーデック1件、ALSA出力3件。
-- Rust Core C ABI ライブラリ74件、試験用の2件は通常実行から除外。うち新規の ALSA 時計テストは個別に成功。
+- Rust Core C ABI ライブラリ75件、試験用の2件は通常実行から除外。うち新規の ALSA 時計テストは個別に成功。
 - ネイティブクレートの rustfmt、Clippy（警告をエラー扱い）を通過。
 - Alignment Lab は Qt Quick の独立ビルド、Python ユニット6件、GUI のワーカープロトコル試験1件。
-  CPUベンチマークは15ペア・45試行。CUDA デバイス未検証。
+  CPUベンチマークは15ペア・45試行。Qt の型付き QML を qmllint で確認。CUDA デバイス未検証。
 
 - Rust Core の変更と #8/#11/#12/#13/#14 を Debian 上で統合し、
-  Qt のプレーヤーと YouTube ワークスペースをビルドした。両モードのオフスクリーン起動と
+  Qt のプレーヤーと YouTube ワークスペースをビルドした。Linux デスクトップ統合は無効。
+  両モードのオフスクリーン起動と
   GPL、依存告知、Linux デスクトップファイルのステージングを確認した。
-- Xvfb CTest の初回統合結果は22/23。残る `tst_views` の4件は
-  `filledIconsHaveNoHoles` の account_circle、library_music、home、favorite。
-  #12 の比較記録にも同じ4件がある。今回 `aNarrowWindowClosesItsRightPanels` は成功した。
+- 最終検証用ヘッド `dc86c06` の Xvfb CTest は22/23。
+  `tst_views` の `filledIconsHaveNoHoles` 4件（account_circle、library_music、home、favorite）と
+  `aNarrowWindowClosesItsRightPanels` が失敗。最初の統合実行では狭幅テストは成功しており、
+  初回も22/23。最終実行の5件は #12 にある上流比較の失敗項目と一致した。
 - GitHub Actions の手動ディスパッチは HTTP 422。リポジトリで Actions が無効という応答だった。
 
 ## 実機で確認する項目
@@ -52,5 +57,5 @@ CachyOS / Hyprland の物理出力と体感、Windows/macOS、実アカウント
 ## Codex 利用残量
 
 公式 App Server `account/rateLimits/read` を実行。
-2026-11-27 07:50、08:07、08:15、08:21、08:31、08:36 JST の確認では HTTP 401 が返った。
+2026-11-27 07:50、08:07、08:15、08:21、08:31、08:36、08:45 JST の確認では HTTP 401 が返った。
 割合は返らず、10%基準を判定できる値は得られなかった。
