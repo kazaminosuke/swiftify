@@ -4,13 +4,47 @@ use std::{
     fs::{self, File},
     io::{self, Read, Seek, SeekFrom},
     path::Path,
-    sync::{Arc, Mutex},
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicBool, Ordering},
+    },
 };
 
 /// Opens independent readers for the same recording. The player can keep the
 /// previous reader active while preparing a new one for a seek.
 pub trait MediaProvider: Send + Sync {
     fn open(&self) -> io::Result<MediaInput>;
+
+    /// A provider with interruptible I/O can retain this token in its reader.
+    /// Reads and seeks must still have a deadline if the transport cannot wake
+    /// promptly. File providers can use the default implementation.
+    fn open_cancellable(&self, _cancellation: MediaCancellation) -> io::Result<MediaInput> {
+        self.open()
+    }
+}
+
+/// Cancellation for one opened reader. Reopening the same media receives a
+/// different token, so cancelling a previous decoder leaves its replacement alone.
+#[derive(Clone, Default)]
+pub struct MediaCancellation(Arc<AtomicBool>);
+
+impl MediaCancellation {
+    pub fn is_cancelled(&self) -> bool {
+        self.0.load(Ordering::Acquire)
+    }
+
+    #[cfg(feature = "player")]
+    pub(crate) fn cancel(&self) {
+        self.0.store(true, Ordering::Release);
+    }
+
+    fn check(&self) -> io::Result<()> {
+        if self.is_cancelled() {
+            // Interrupted would invite format readers to retry immediately.
+            return Err(io::ErrorKind::ConnectionAborted.into());
+        }
+        Ok(())
+    }
 }
 
 trait ReadSeek: Read + Seek + Send + Sync {}
@@ -23,6 +57,8 @@ pub struct MediaInput {
     pub(crate) byte_len: Option<u64>,
     pub(crate) extension: Option<String>,
     pub(crate) failure: ReadFailure,
+    pub(crate) seek_failure: ReadFailure,
+    cancellation: MediaCancellation,
 }
 
 impl MediaInput {
@@ -36,12 +72,21 @@ impl MediaInput {
             byte_len,
             extension,
             failure: ReadFailure::default(),
+            seek_failure: ReadFailure::default(),
+            cancellation: MediaCancellation::default(),
         }
+    }
+
+    #[cfg(feature = "player")]
+    pub(crate) fn with_cancellation(mut self, cancellation: MediaCancellation) -> Self {
+        self.cancellation = cancellation;
+        self
     }
 }
 
 impl Read for MediaInput {
     fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
+        self.cancellation.check()?;
         self.reader.read(buffer).inspect_err(|error| {
             if error.kind() != io::ErrorKind::Interrupted {
                 self.failure.record(error.kind());
@@ -52,7 +97,12 @@ impl Read for MediaInput {
 
 impl Seek for MediaInput {
     fn seek(&mut self, position: SeekFrom) -> io::Result<u64> {
-        self.reader.seek(position)
+        self.cancellation.check()?;
+        self.reader.seek(position).inspect_err(|error| {
+            if error.kind() != io::ErrorKind::Interrupted {
+                self.seek_failure.record(error.kind());
+            }
+        })
     }
 }
 
@@ -79,6 +129,13 @@ impl ReadFailure {
     #[cfg(feature = "player")]
     pub(crate) fn kind(&self) -> Option<io::ErrorKind> {
         self.0.lock().ok().and_then(|failure| *failure)
+    }
+
+    #[cfg(feature = "player")]
+    pub(crate) fn clear(&self) {
+        if let Ok(mut failure) = self.0.lock() {
+            *failure = None;
+        }
     }
 }
 
