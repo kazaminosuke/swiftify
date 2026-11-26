@@ -6,8 +6,8 @@ use std::{path::Path, time::Duration};
 use swiftify_native_audio::decode::open_file;
 
 #[test]
-fn opus_decodes_and_seeks_in_ogg_and_webm() {
-    for file in ["two-tones.opus", "two-tones.webm"] {
+fn decodes_and_seeks_in_ogg_opus_webm_opus_and_webm_vorbis() {
+    for file in ["two-tones.opus", "two-tones.webm", "two-tones-vorbis.webm"] {
         let path = Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("tests/audio")
             .join(file);
