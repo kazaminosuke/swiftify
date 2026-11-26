@@ -131,6 +131,23 @@ char *swiftify_core_set_equalizer(const SwiftifyCore *core, const float *gains_d
 
 bool swiftify_core_session_is_valid(const SwiftifyCore *core);
 bool swiftify_core_audio_output_stalled(const SwiftifyCore *core);
+typedef struct SwiftifyPlaybackClock {
+    uint64_t revision;
+    uint32_t position_ms;
+    uint32_t duration_ms;
+    uint32_t submitted_ms;
+    uint32_t latency_ms;
+    uint32_t flags;
+} SwiftifyPlaybackClock;
+
+enum {
+    SWIFTIFY_CLOCK_LOCAL = 1u,
+    SWIFTIFY_CLOCK_LATENCY_VALID = 2u,
+    SWIFTIFY_CLOCK_DRAINED = 4u,
+};
+
+bool swiftify_core_playback_clock(const SwiftifyCore *core, SwiftifyPlaybackClock *output);
+void swiftify_core_seek_async(const SwiftifyCore *core, uint64_t request_id, uint32_t position_ms);
 uint32_t swiftify_core_playback_position_ms(const SwiftifyCore *core);
 uint32_t swiftify_core_playback_duration_ms(const SwiftifyCore *core);
 bool swiftify_core_take_end_of_track(const SwiftifyCore *core);

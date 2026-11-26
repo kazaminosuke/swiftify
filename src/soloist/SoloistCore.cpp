@@ -917,6 +917,20 @@ bool SoloistCore::audioOutputStalled() const
     return (m_localActive || m_routed) && m_fallback->audioOutputStalled();
 }
 
+QCoro::Task<> SoloistCore::seekAsync(quint32 positionMs)
+{
+    if (m_localActive) {
+        co_await m_fallback->seekAsync(positionMs);
+    } else {
+        seek(positionMs);
+    }
+}
+
+PlaybackClock SoloistCore::playbackClock() const
+{
+    return m_localActive ? m_fallback->playbackClock() : PlaybackCore::playbackClock();
+}
+
 quint32 SoloistCore::playbackPositionMs() const
 {
     if (m_localActive) {

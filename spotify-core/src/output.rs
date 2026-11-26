@@ -16,13 +16,7 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-//! the audio device, opened directly. rodio's sink and mixer handed it one
-//! sample at a time, each through a stack of wrappers (a queue, a converter
-//! with nothing to convert, pausing, stopping, skipping), and kept it running
-//! on silence while nothing played: that walk cost as much as the whole
-//! interface thread while music played, and a little for ever after the
-//! first offline track, whose stream was never closed. here the device is
-//! filled a block at a time and stopped while nothing plays.
+//! Desktop CPAL outputs for Spotify streams and buffered local/live sources.
 
 use std::{
     sync::{
@@ -30,10 +24,12 @@ use std::{
         atomic::{AtomicBool, AtomicU32, Ordering},
         mpsc,
     },
-    thread,
+    thread::{self, JoinHandle},
+    time::{Duration, Instant},
 };
 
-use rodio::{Source, cpal::traits::StreamTrait};
+use rodio::{Source, cpal::{self, traits::StreamTrait}};
+use swiftify_native_audio::render::{PcmFrame, RenderPosition, RenderQueue, frame_time};
 
 pub(crate) fn open_stereo_stream<F>(mut fill: F) -> Option<(rodio::cpal::Stream, u32)>
 where
@@ -60,43 +56,59 @@ pub(crate) trait BlockSource: Iterator<Item = f32> + Send {
 
 impl BlockSource for std::vec::IntoIter<f32> {}
 
-/// where offline tracks play: one source at a time, read straight into the
-/// device's buffer, with the device stopped while it is paused or has run out.
-///
-/// a stream is not always free to move between threads, so it lives on a
-/// thread of its own, told to play or pause; it closes when this is dropped.
+/// Owns the device on its control thread. Local decoding, buffering and DSP
+/// run on a source worker, with the same PCM handoff as the native player.
 pub(crate) struct LocalOutput {
     shared: Arc<LocalShared>,
-    commands: Mutex<mpsc::Sender<bool>>,
+    commands: mpsc::Sender<bool>,
     rate: u32,
 }
 
-#[derive(Default)]
 struct LocalShared {
-    playing: Mutex<Option<LocalStream>>,
-    /// an f32's bits
+    slot: Mutex<Slot>,
     volume: AtomicU32,
-    paused: AtomicBool,
     lost: AtomicBool,
 }
 
+struct Slot {
+    source: Option<OutputSource>,
+    paused_at: Option<Instant>,
+    reported_end: bool,
+}
+
+pub(crate) struct OutputSource {
+    pub(crate) queue: Arc<RenderQueue>,
+    worker: Option<JoinHandle<()>>,
+}
+
+impl Drop for OutputSource {
+    fn drop(&mut self) {
+        self.queue.cancel();
+        if let Some(worker) = self.worker.take() {
+            let _ = worker.join();
+        }
+    }
+}
+
 impl LocalShared {
-    fn playing(&self) -> MutexGuard<'_, Option<LocalStream>> {
-        self.playing.lock().unwrap_or_else(PoisonError::into_inner)
+    fn slot(&self) -> MutexGuard<'_, Slot> {
+        self.slot.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
-    fn fill(&self, out: &mut [f32]) {
-        let mut playing = self.playing();
-        // A backend may still request PCM while its pause command is in flight.
-        // Read the flag with the source held so a paused seek cannot consume
-        // any of the replacement before an explicit resume.
-        if self.paused.load(Ordering::Acquire) || self.lost.load(Ordering::Acquire) {
-            out.fill(0.0);
+    fn fill(&self, out: &mut [f32], timing: &cpal::OutputCallbackInfo) {
+        out.fill(0.0);
+        if self.lost.load(Ordering::Acquire) {
             return;
         }
-        let volume = f32::from_bits(self.volume.load(Ordering::Relaxed));
-        let written = playing.as_mut().map_or(0, |stream| stream.fill(out, volume));
-        out[written..].fill(0.0);
+        if let Ok(slot) = self.slot.try_lock()
+            && slot.paused_at.is_none()
+            && let Some(source) = &slot.source
+        {
+            let volume = f32::from_bits(self.volume.load(Ordering::Relaxed));
+            let timestamp = timing.timestamp();
+            let latency = timestamp.playback.duration_since(&timestamp.callback);
+            source.queue.render(out, volume, Instant::now(), latency);
+        }
     }
 }
 
@@ -104,8 +116,12 @@ impl LocalOutput {
     pub(crate) fn open() -> Option<Self> {
         let shared = Arc::new(LocalShared {
             volume: AtomicU32::new(1.0_f32.to_bits()),
-            paused: AtomicBool::new(true),
-            ..LocalShared::default()
+            lost: AtomicBool::new(false),
+            slot: Mutex::new(Slot {
+                source: None,
+                paused_at: Some(Instant::now()),
+                reported_end: false,
+            }),
         });
         let (commands, received) = mpsc::channel::<bool>();
         let (opened, opening) = mpsc::sync_channel(1);
@@ -116,20 +132,15 @@ impl LocalOutput {
             .name("swiftify-local-output".to_owned())
             .spawn(move || {
                 let Some((stream, rate)) = swiftify_native_audio::device::open_stereo_stream(
-                    move |out, _| filled.fill(out),
+                    move |out, timing| filled.fill(out, timing),
                     move |_| failed.lost.store(true, Ordering::Release),
                 ) else {
                     let _ = opened.send(None);
                     return;
                 };
                 let _ = opened.send(Some(rate));
-                // until every handle has gone
                 while let Ok(play) = received.recv() {
-                    let stopped = if play {
-                        stream.play().is_err()
-                    } else {
-                        stream.pause().is_err()
-                    };
+                    let stopped = if play { stream.play().is_err() } else { stream.pause().is_err() };
                     if stopped {
                         controlled.lost.store(true, Ordering::Release);
                     }
@@ -137,51 +148,89 @@ impl LocalOutput {
             })
             .ok()?;
         let rate = opening.recv().ok()??;
-        Some(Self {
-            shared,
-            commands: Mutex::new(commands),
-            rate,
-        })
+        Some(Self { shared, commands, rate })
     }
 
-    fn command(&self, play: bool) {
-        self.shared.paused.store(!play, Ordering::Release);
-        if self.commands.lock().unwrap_or_else(PoisonError::into_inner).send(play).is_err() {
+    fn command(&self, slot: &mut Slot, play: bool) {
+        let now = Instant::now();
+        if play {
+            if let Some(paused) = slot.paused_at.take()
+                && let Some(source) = &slot.source
+            {
+                source.queue.resume(paused, now);
+            }
+        } else {
+            slot.paused_at.get_or_insert(now);
+        }
+        if self.commands.send(play).is_err() {
             self.shared.lost.store(true, Ordering::Release);
         }
     }
 
-    /// what plays next, in place of whatever played before
-    pub(crate) fn append<S>(&self, source: S)
+    pub(crate) fn prepare(
+        &self,
+        offset: Duration,
+        capacity_frames: usize,
+        read: impl FnMut(&mut [PcmFrame]) -> usize + Send + 'static,
+    ) -> Result<OutputSource, String> {
+        let queue = Arc::new(RenderQueue::new(self.rate, capacity_frames, offset));
+        let producer = Arc::clone(&queue);
+        let worker = thread::Builder::new()
+            .name("swiftify-local-pcm".to_owned())
+            .spawn(move || producer.produce(read, || None))
+            .map_err(|err| format!("could not start audio worker: {err}"))?;
+        Ok(OutputSource { queue, worker: Some(worker) })
+    }
+
+    pub(crate) fn install(&self, source: OutputSource) -> Option<OutputSource> {
+        let mut slot = self.shared.slot();
+        slot.reported_end = false;
+        if let Some(paused) = &mut slot.paused_at {
+            *paused = Instant::now();
+        }
+        slot.source.replace(source)
+    }
+
+    pub(crate) fn append<S>(&self, source: S) -> Result<(), String>
     where
         S: Source<Item = f32> + BlockSource + 'static,
     {
         let channels = usize::from(source.channels()).max(1);
-        let rate = source.sample_rate().max(1);
-        let stream = LocalStream::new(Box::new(source), channels, rate, self.rate);
-        let previous = self.shared.playing().replace(stream);
-        drop(previous);
-    }
-
-    pub(crate) fn clear(&self) {
-        let previous = self.shared.playing().take();
-        drop(previous);
+        let rate = self.rate;
+        let from = source.sample_rate().max(1);
+        let mut source = LocalStream::new(Box::new(source), channels, from, rate);
+        let mut frame_index = 0;
+        let mut output_samples = [0.0; 1_024];
+        let prepared = self.prepare(Duration::ZERO, 1_024, move |out| {
+            let sample_count = source.fill(&mut output_samples[..out.len() * 2], 1.0);
+            let frames = &output_samples[..sample_count].as_chunks::<2>().0;
+            for (target, samples) in out.iter_mut().zip(frames.iter()) {
+                frame_index += 1;
+                *target = PcmFrame { stereo: *samples, media_end: frame_time(frame_index, rate) };
+            }
+            frames.len()
+        })?;
+        drop(self.install(prepared));
+        Ok(())
     }
 
     pub(crate) fn stop(&self) {
-        self.clear();
-        self.pause();
+        let previous = {
+            let mut slot = self.shared.slot();
+            self.command(&mut slot, false);
+            slot.source.take()
+        };
+        drop(previous);
     }
 
     pub(crate) fn play(&self) {
-        self.command(true);
+        self.command(&mut self.shared.slot(), true);
     }
 
     pub(crate) fn pause(&self) {
-        self.command(false);
+        self.command(&mut self.shared.slot(), false);
     }
 
-    /// the device's rate, which a source at the same rate plays at untouched
     pub(crate) fn rate(&self) -> u32 {
         self.rate
     }
@@ -190,32 +239,32 @@ impl LocalOutput {
         self.shared.lost.load(Ordering::Acquire)
     }
 
-    pub(crate) fn is_paused(&self) -> bool {
-        self.shared.paused.load(Ordering::Acquire)
-    }
-
     pub(crate) fn set_volume(&self, volume: f32) {
-        self.shared
-            .volume
-            .store(volume.to_bits(), Ordering::Relaxed);
+        self.shared.volume.store(volume.to_bits(), Ordering::Relaxed);
     }
 
-    /// nothing left to play
     pub(crate) fn empty(&self) -> bool {
-        self.shared
-            .playing()
-            .as_ref()
-            .is_none_or(LocalStream::ended)
+        let slot = self.shared.slot();
+        slot.source.as_ref().is_none_or(|source| source.queue.position(slot.paused_at).drained)
     }
 
-    /// stops the device if what played has run out, and nothing has taken
-    /// its place: a source appended meanwhile, and played, keeps playing
-    pub(crate) fn pause_if_ended(&self) {
-        let playing = self.shared.playing();
-        if playing.as_ref().is_none_or(LocalStream::ended) {
-            self.command(false);
+    pub(crate) fn position(&self, queue: &Arc<RenderQueue>) -> Option<RenderPosition> {
+        let slot = self.shared.slot();
+        let source = slot.source.as_ref()?;
+        Arc::ptr_eq(queue, &source.queue).then(|| queue.position(slot.paused_at))
+    }
+
+    pub(crate) fn take_drained(&self, queue: &Arc<RenderQueue>) -> bool {
+        let mut slot = self.shared.slot();
+        if self.is_lost() || slot.reported_end
+            || slot.source.as_ref().is_none_or(|source| !Arc::ptr_eq(queue, &source.queue))
+            || !queue.position(slot.paused_at).drained
+        {
+            return false;
         }
-        drop(playing);
+        slot.reported_end = true;
+        self.command(&mut slot, false);
+        true
     }
 }
 
@@ -261,6 +310,7 @@ impl LocalStream {
         }
     }
 
+    #[cfg(test)]
     fn ended(&self) -> bool {
         self.ended
     }
@@ -383,7 +433,7 @@ impl LocalStream {
 
 #[cfg(test)]
 mod tests {
-    use super::{AtomicBool, AtomicU32, LocalShared, LocalStream, Ordering};
+    use super::LocalStream;
 
     fn stream(samples: Vec<f32>, channels: usize, from: u32, to: u32) -> LocalStream {
         LocalStream::new(Box::new(samples.into_iter()), channels, from, to)
@@ -399,25 +449,6 @@ mod tests {
                 return out;
             }
         }
-    }
-
-    #[test]
-    fn callbacks_cannot_consume_a_replaced_source_while_paused() {
-        let shared = LocalShared {
-            paused: AtomicBool::new(true),
-            volume: AtomicU32::new(1.0_f32.to_bits()),
-            ..LocalShared::default()
-        };
-        *shared.playing() = Some(stream(vec![1.0, 2.0, 3.0, 4.0], 2, 48_000, 48_000));
-        let mut block = [5.0; 2];
-        shared.fill(&mut block);
-        assert_eq!(block, [0.0, 0.0]);
-        shared.paused.store(false, Ordering::Release);
-        shared.fill(&mut block);
-        assert_eq!(block, [1.0, 2.0]);
-        shared.lost.store(true, Ordering::Release);
-        shared.fill(&mut block);
-        assert_eq!(block, [0.0, 0.0]);
     }
 
     #[test]

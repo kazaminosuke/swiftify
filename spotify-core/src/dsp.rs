@@ -222,6 +222,23 @@ impl DspProcessor {
         samples
     }
 
+    pub(crate) fn tempo(&self) -> f32 {
+        self.settings.tempo
+    }
+
+    /// Emit the pending overlap at local-file EOF. Limit the padding to the
+    /// requested output length so zero input does not extend the recording.
+    pub(crate) fn finish(&mut self, frames: usize) -> Vec<f32> {
+        let stretch = self.settings.stretch_factor();
+        if frames == 0 || (stretch - 1.0).abs() <= 1e-4 {
+            return Vec::new();
+        }
+        let padding = (frames as f64 / f64::from(stretch)).ceil() as usize + FRAME + 2 * SEARCH as usize;
+        let mut tail = self.stretch.process(&vec![0.0; padding * CHANNELS], stretch);
+        tail.truncate(frames * CHANNELS);
+        tail
+    }
+
     /// the equalizer alone, in place: for live audio, which can be neither
     /// slowed down nor sped up, so tempo and pitch are left out
     pub(crate) fn equalize(&mut self, samples: &mut [f32]) {
@@ -251,6 +268,16 @@ impl DspProcessor {
             for equalizer in &mut self.equalizers {
                 equalizer.retune(settings.gains_db);
             }
+        }
+        // A disabled transform must not replay buffered audio if it is
+        // enabled again later within the same track.
+        if (settings.stretch_factor() - 1.0).abs() <= 1e-4
+            && (self.settings.stretch_factor() - 1.0).abs() > 1e-4
+        {
+            self.stretch = TimeStretch::new();
+        }
+        if (settings.resample_ratio() - 1.0).abs() <= 1e-4 {
+            self.resampler = Resampler::default();
         }
         self.settings = settings;
     }

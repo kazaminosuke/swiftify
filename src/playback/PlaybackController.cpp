@@ -127,6 +127,7 @@ PlaybackController::~PlaybackController()
 {
     savePlaybackState();
     m_playbackRequest.cancel();
+    m_seekRequest.cancel();
     m_lyricsRequest.cancel();
     if (s_instance == this) {
         s_instance = nullptr;
@@ -255,6 +256,7 @@ void PlaybackController::followRemoteVolume(float volume)
 
 void PlaybackController::setCurrentSong(const std::optional<Song> &song, quint32 crossfadeMs)
 {
+    m_seekRequest.cancel();
     const bool changed = song.has_value() != m_currentSong.has_value()
         || (song && m_currentSong && !song->isSameInstance(*m_currentSong));
     m_currentSong = song;
@@ -780,7 +782,10 @@ QCoro::Task<> PlaybackController::runStartPlayback(Song song, CancelToken token,
         }
         throwIfCancelled(token);
         if (!isCurrent(song)) throw Cancelled();
-        if (initialPositionMs > 0) m_core->seek(initialPositionMs);
+        if (initialPositionMs > 0) {
+            co_await m_core->seekAsync(initialPositionMs);
+            throwIfCancelled(token);
+        }
     } catch (const Cancelled &) {
         // a logout replaced the core or the session under this request.
         cancelled = true;
@@ -892,6 +897,7 @@ QCoro::Task<> PlaybackController::runResume(CancelToken token)
 void PlaybackController::cancelPlaybackRequest()
 {
     m_playbackRequest.cancel();
+    m_seekRequest.cancel();
 }
 
 void PlaybackController::silenceWithdrawnPlayback()
@@ -962,7 +968,11 @@ QCoro::Task<> PlaybackController::restartAudioOutput(CancelToken token)
             co_return;
         }
         if (position > 0) {
-            m_core->seek(position);
+            co_await m_core->seekAsync(position);
+            throwIfCancelled(token);
+            if (!isCurrent(song)) {
+                co_return;
+            }
         }
         m_playbackNeedsLoad = false;
         setStatus(QStringLiteral("Playing"));
@@ -1089,25 +1099,45 @@ void PlaybackController::seek(int requestedMs)
         syncMediaSession();
         return;
     }
+    detach(runSeek(positionMs, m_seekRequest.renew()));
+}
+
+QCoro::Task<> PlaybackController::runSeek(quint32 positionMs, CancelToken token)
+{
     try {
-        m_core->seek(positionMs);
-        // whatever the core had queued about the old position is moot now,
-        // including an end-of-track that would otherwise skip the song.
-        m_core->takeEndOfTrack();
-        setLivePosition(positionMs);
-        // librespot reports loading while it re-buffers, which parks its
-        // timeline as paused.
-        if (m_playing) {
-            m_core->play();
-        } else if (!m_playbackRequest.isRunning()) {
-            // a seek is never what starts the sound.
-            m_core->pause();
+        co_await m_core->seekAsync(positionMs);
+        if (isCancelled(token)) {
+            co_return;
+        }
+        const auto clock = m_core->playbackClock();
+        if (clock.local) {
+            setLivePosition(clock.positionMs);
+        } else {
+            // Clear any end event from before a streaming seek. The local
+            // renderer scopes EOF to its current source and clock revision.
+            m_core->takeEndOfTrack();
+            setLivePosition(positionMs);
+            if (m_playing) {
+                m_core->play();
+            } else if (!m_playbackRequest.isRunning()) {
+                m_core->pause();
+            }
         }
         syncMediaSession();
         schedulePlaybackSave();
+    } catch (const Cancelled &) {
+        if (isCancelled(token)) {
+            co_return;
+        }
     } catch (const SpotifyError &error) {
-        reportError(QStringLiteral("Seeking playback"), error.message());
+        if (isCancelled(token)) {
+            co_return;
+        }
+        if (error.kind() != SpotifyError::Kind::Superseded) {
+            reportError(QStringLiteral("Seeking playback"), error.message());
+        }
     }
+    m_seekRequest.finish(token);
 }
 
 void PlaybackController::seekBy(int offsetMs)
@@ -1239,7 +1269,7 @@ void PlaybackController::pollPlayback()
             }
         }
     }
-    if (m_core->takeEndOfTrack() && isPlaybackAtEnd()) {
+    if (!m_seekRequest.isRunning() && m_core->takeEndOfTrack() && (m_localClock || isPlaybackAtEnd())) {
         handleEndOfTrack();
     }
     stopIfAudioOutputStalled();
@@ -1247,13 +1277,19 @@ void PlaybackController::pollPlayback()
 
 void PlaybackController::syncPositionAndDuration()
 {
-    const quint32 position = m_core->playbackPositionMs();
-    const quint32 duration = m_core->playbackDurationMs();
+    const auto clock = m_core->playbackClock();
+    const quint32 position = clock.positionMs;
+    const bool changedClock = m_localClock != clock.local || m_clockRevision != clock.revision;
+    if (m_localClock != clock.local) {
+        m_pollTimer.setInterval(clock.local ? 50 : 250);
+    }
+    m_clockRevision = clock.revision;
+    m_localClock = clock.local;
     if (position != m_livePositionMs) {
         setLivePosition(position);
     }
-    setDuration(duration);
-    if (std::abs(qint64(position) - qint64(m_lastSyncedMediaPosition)) >= 1000) {
+    setDuration(clock.durationMs);
+    if (changedClock || std::abs(qint64(position) - qint64(m_lastSyncedMediaPosition)) >= 1000) {
         m_lastSyncedMediaPosition = position;
         syncMediaSession();
     }
@@ -1494,6 +1530,7 @@ void PlaybackController::reset()
     m_settings->sync();
     m_remote = false;
     m_playbackRequest.cancel();
+    m_seekRequest.cancel();
     m_lyricsRequest.cancel();
     m_queue.clear();
     m_history.clear();
