@@ -1421,6 +1421,7 @@ impl SpotifyCore {
         let previous = sink.install(source);
         drop(state);
         drop(previous);
+        self.spectrum.clear();
         Ok(())
     }
 
