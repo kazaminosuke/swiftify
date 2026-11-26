@@ -108,7 +108,7 @@ impl LocalTrackSource {
             analysis_samples: [0.0; ANALYSIS_SAMPLE_COUNT],
             analysis_index: 0,
             analysis_enabled: false,
-            dsp: DspProcessor::new(dsp),
+            dsp: DspProcessor::new(dsp, SAMPLE_RATE, NUM_CHANNELS as u16),
             processed: VecDeque::new(),
             drained: false,
         }
