@@ -48,6 +48,8 @@ class AlignmentTests(unittest.TestCase):
                 second = Catalog()
                 first.register("first", "mms-q8", model, "A", "CC-BY-NC-4.0", "example")
                 second.register("second", "mms-q8", model, "B", "CC-BY-NC-4.0", "example")
+                with self.assertRaisesRegex(AlignmentError, "does not match this preset"):
+                    first.register("mms-q8", "mms-q8", model, "", "", "")
                 fresh = Catalog()
                 self.assertEqual(set(fresh.registered), {"first", "second"})
                 fresh.remove("first")
