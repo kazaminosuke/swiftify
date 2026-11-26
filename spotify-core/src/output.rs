@@ -86,11 +86,16 @@ impl LocalShared {
     }
 
     fn fill(&self, out: &mut [f32]) {
+        let mut playing = self.playing();
+        // A backend may still request PCM while its pause command is in flight.
+        // Read the flag with the source held so a paused seek cannot consume
+        // any of the replacement before an explicit resume.
+        if self.paused.load(Ordering::Acquire) || self.lost.load(Ordering::Acquire) {
+            out.fill(0.0);
+            return;
+        }
         let volume = f32::from_bits(self.volume.load(Ordering::Relaxed));
-        let written = self
-            .playing()
-            .as_mut()
-            .map_or(0, |stream| stream.fill(out, volume));
+        let written = playing.as_mut().map_or(0, |stream| stream.fill(out, volume));
         out[written..].fill(0.0);
     }
 }
@@ -378,7 +383,7 @@ impl LocalStream {
 
 #[cfg(test)]
 mod tests {
-    use super::LocalStream;
+    use super::{AtomicBool, AtomicU32, LocalShared, LocalStream, Ordering};
 
     fn stream(samples: Vec<f32>, channels: usize, from: u32, to: u32) -> LocalStream {
         LocalStream::new(Box::new(samples.into_iter()), channels, from, to)
@@ -394,6 +399,25 @@ mod tests {
                 return out;
             }
         }
+    }
+
+    #[test]
+    fn callbacks_cannot_consume_a_replaced_source_while_paused() {
+        let shared = LocalShared {
+            paused: AtomicBool::new(true),
+            volume: AtomicU32::new(1.0_f32.to_bits()),
+            ..LocalShared::default()
+        };
+        *shared.playing() = Some(stream(vec![1.0, 2.0, 3.0, 4.0], 2, 48_000, 48_000));
+        let mut block = [5.0; 2];
+        shared.fill(&mut block);
+        assert_eq!(block, [0.0, 0.0]);
+        shared.paused.store(false, Ordering::Release);
+        shared.fill(&mut block);
+        assert_eq!(block, [1.0, 2.0]);
+        shared.lost.store(true, Ordering::Release);
+        shared.fill(&mut block);
+        assert_eq!(block, [0.0, 0.0]);
     }
 
     #[test]
