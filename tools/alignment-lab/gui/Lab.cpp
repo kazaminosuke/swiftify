@@ -170,6 +170,9 @@ void Lab::start(Job job, const QStringList &arguments)
     }
     m_status = tr("Starting worker…");
     emit stateChanged();
+    auto environment = QProcessEnvironment::systemEnvironment();
+    environment.insert(QStringLiteral("ALIGNMENT_LAB_BACKGROUND"), QStringLiteral("1"));
+    m_worker.setProcessEnvironment(environment);
     m_worker.setWorkingDirectory(runtime.absolutePath());
     m_worker.start(python, QStringList{QStringLiteral("-B"), QStringLiteral("-m"),
                                       QStringLiteral("alignment_lab")} + arguments);

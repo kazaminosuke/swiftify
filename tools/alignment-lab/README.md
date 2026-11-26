@@ -71,8 +71,9 @@ CLI の `align --cache --device cpu` では入力ファイルとモデルの識�
 評価用の分離は `ALIGNMENT_LAB_REGISTRY=/path/to/models.json` で指定できます。
 
 CLI は音声前処理、正規化、モデルアダプター、整列、エクスポート、計測をライブラリーとして利用します。
-Qt はローカルワーカーを非同期起動し、JSON Lines で進捗と結果を受け取ります。Linux のキャンセルは
-FFmpeg を含むワーカープロセスグループを終了します。音源は最大15分、歌詞は最大64 KiBです。
+Qt はローカルワーカーを非同期起動し、JSON Lines で進捗と結果を受け取ります。
+Linux では GUI ワーカーの CPU スケジューリング優先度を下げ、キャンセルは FFmpeg を含む
+ワーカープロセスグループを終了します。音源は最大15分、歌詞は最大64 KiBです。
 
 ```sh
 python3 -B -m unittest discover -s tests -v
