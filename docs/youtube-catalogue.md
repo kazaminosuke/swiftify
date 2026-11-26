@@ -1,7 +1,12 @@
 # Native YouTube catalogue
 
 On a build with `SWIFTIFY_YOUTUBE_CLIENT=ON`, launch `swiftify --youtube`.
-The window uses Qt Quick and Swiftify's Material components. For guest search,
+The window uses Qt Quick and Swiftify's Material components. A second launch
+raises the existing catalogue window. The playback window uses its own
+instance. Launch it with `--spotify` or use an existing playback shortcut such
+as `--play-pause`.
+
+For guest search,
 set `SWIFTIFY_YOUTUBE_API_KEY` in the process environment using your own
 configured project. For account collections provide the desktop application's
 `SWIFTIFY_GOOGLE_CLIENT_ID` and, when required, `SWIFTIFY_GOOGLE_CLIENT_SECRET`.
