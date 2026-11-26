@@ -289,6 +289,8 @@ impl PlayQueue {
     /// leaving the device's thread the list `spent` was (emptied, its room
     /// kept) to fill again
     fn push(&self, chunk: PlayedChunk, spent: &mut Vec<PlayedChunk>) {
+        let capacity = SpectrumSink::QUEUE_HIGH_WATER * 2;
+        spent.reserve(capacity.saturating_sub(spent.len()));
         let mut state = self.state();
         state.chunks.push_back(chunk);
         std::mem::swap(&mut state.spent, spent);
@@ -306,7 +308,11 @@ impl PlayQueue {
             out.fill(0.0);
             return;
         };
-        let QueueState { chunks, window, spent } = &mut *state;
+        let QueueState {
+            chunks,
+            window,
+            spent,
+        } = &mut *state;
         let mut written = 0;
         while written < out.len() && spent.len() < spent.capacity() {
             let Some(front) = chunks.front_mut() else {
