@@ -8933,6 +8933,7 @@ Mozilla Public License 2.0, for
     symphonia-utils-xiph 0.5.5
     symphonia 0.5.5
     symphonia 0.6.1
+    symphonia-codec-vorbis 0.6.1
     symphonia-common 0.6.1
     symphonia-core 0.6.1
     symphonia-format-mkv 0.6.1

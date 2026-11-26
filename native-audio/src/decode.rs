@@ -8,7 +8,10 @@ use std::{
 
 use rodio::{Decoder, Source, decoder::DecoderError, source::SeekError};
 use symphonia::core::{
-    codecs::audio::{AudioDecoder, AudioDecoderOptions, well_known::CODEC_ID_OPUS},
+    codecs::audio::{
+        AudioDecoder, AudioDecoderOptions,
+        well_known::{CODEC_ID_OPUS, CODEC_ID_VORBIS},
+    },
     errors::Error,
     formats::{FormatOptions, FormatReader, SeekMode, SeekTo, TrackType, probe::Hint},
     io::MediaSourceStream,
@@ -51,9 +54,9 @@ pub fn open_media(mut input: MediaInput) -> Result<FileSource, DecoderError> {
     if header.starts_with(&[0x1a, 0x45, 0xdf, 0xa3]) || ogg_opus {
         let failure = input.failure.clone();
         let stream = MediaSourceStream::new(Box::new(input), Default::default());
-        return OpusSource::open(stream, failure)
+        return DemuxedSource::open(stream, failure)
             .map(|source| Box::new(source) as FileSource)
-            .map_err(|error| DecoderError::IoError(error.to_string()));
+            .map_err(demux_error);
     }
 
     let length = input.byte_len;
@@ -71,12 +74,25 @@ pub fn open_media(mut input: MediaInput) -> Result<FileSource, DecoderError> {
 }
 
 fn file_error(error: io::Error) -> DecoderError {
-    DecoderError::IoError(error.to_string())
+    DecoderError::IoError(error.kind().to_string())
 }
 
-struct OpusSource {
+fn demux_error(error: Error) -> DecoderError {
+    match error {
+        Error::IoError(error) => file_error(error),
+        Error::DecodeError(message) => DecoderError::DecodeError(message),
+        Error::LimitError(message) => DecoderError::LimitError(message),
+        Error::ResetRequired => DecoderError::ResetRequired,
+        Error::SeekError(_) => DecoderError::DecodeError("could not position the audio stream"),
+        Error::Unsupported(_) => DecoderError::UnrecognizedFormat,
+        _ => DecoderError::DecodeError("could not decode the audio stream"),
+    }
+}
+
+struct DemuxedSource {
     format: Box<dyn FormatReader>,
-    decoder: OpusDecoder,
+    decoder: Box<dyn AudioDecoder>,
+    seek_preroll: Duration,
     track: u32,
     rate: u32,
     channels: u16,
@@ -89,7 +105,7 @@ struct OpusSource {
     failure: ReadFailure,
 }
 
-impl OpusSource {
+impl DemuxedSource {
     fn open(stream: MediaSourceStream<'static>, failure: ReadFailure) -> Result<Self, Error> {
         let format = symphonia::default::get_probe().probe(
             &Hint::new(),
@@ -105,21 +121,30 @@ impl OpusSource {
             .as_ref()
             .and_then(|params| params.audio())
             .ok_or(Error::Unsupported("audio parameters unavailable"))?;
-        if params.codec != CODEC_ID_OPUS {
-            return Err(Error::Unsupported("the container has no Opus track"));
-        }
+        let options = AudioDecoderOptions::default();
+        let (decoder, seek_preroll): (Box<dyn AudioDecoder>, _) = match params.codec {
+            CODEC_ID_OPUS => (
+                Box::new(OpusDecoder::try_new(params, &options)?),
+                Duration::from_millis(80),
+            ),
+            CODEC_ID_VORBIS => (
+                symphonia::default::get_codecs().make_audio_decoder(params, &options)?,
+                // Vorbis needs a preceding packet to initialize its overlap.
+                Duration::from_millis(100),
+            ),
+            _ => return Err(Error::Unsupported("unsupported audio codec in EBML")),
+        };
         let time_base = track
             .time_base
-            .ok_or(Error::Unsupported("no Opus time base"))?;
-        let decoder = OpusDecoder::try_new(params, &AudioDecoderOptions::default())?;
+            .ok_or(Error::Unsupported("no audio time base"))?;
         let decoded = decoder.codec_params();
         let rate = decoded
             .sample_rate
-            .ok_or(Error::Unsupported("no Opus sample rate"))?;
+            .ok_or(Error::Unsupported("no decoded sample rate"))?;
         let channels = decoded
             .channels
             .as_ref()
-            .ok_or(Error::Unsupported("no Opus channels"))?
+            .ok_or(Error::Unsupported("no decoded channels"))?
             .count() as u16;
         let duration = track
             .duration
@@ -138,6 +163,7 @@ impl OpusSource {
             track: track.id,
             format,
             decoder,
+            seek_preroll,
             rate,
             channels,
             time_base,
@@ -150,7 +176,7 @@ impl OpusSource {
         };
         source.fill()?;
         if source.ended {
-            return Err(Error::DecodeError("empty Opus track"));
+            return Err(Error::DecodeError("empty audio track"));
         }
         Ok(source)
     }
@@ -173,7 +199,7 @@ impl OpusSource {
             let timestamp = self
                 .time_base
                 .calc_time(packet.pts)
-                .ok_or(Error::DecodeError("Opus packet timestamp out of range"))?
+                .ok_or(Error::DecodeError("audio packet timestamp out of range"))?
                 .as_nanos();
             let skip = self.frames(self.target_ns - timestamp).max(
                 self.frames(
@@ -201,7 +227,7 @@ impl OpusSource {
     }
 }
 
-impl Iterator for OpusSource {
+impl Iterator for DemuxedSource {
     type Item = f32;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -220,7 +246,7 @@ impl Iterator for OpusSource {
     }
 }
 
-impl Source for OpusSource {
+impl Source for DemuxedSource {
     fn current_span_len(&self) -> Option<usize> {
         None
     }
@@ -238,9 +264,9 @@ impl Source for OpusSource {
         let target = self
             .duration
             .map_or(position, |duration| position.min(duration));
-        let preroll = target.saturating_sub(Duration::from_millis(80));
+        let preroll = target.saturating_sub(self.seek_preroll);
         let time = Time::try_from_nanos_u128(preroll.as_nanos())
-            .ok_or_else(|| seek_error("Opus seek time out of range"))?;
+            .ok_or_else(|| seek_error("audio seek time out of range"))?;
         self.format
             .seek(
                 SeekMode::Accurate,
