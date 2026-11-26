@@ -216,7 +216,10 @@ Item {
                 rightPadding: 24
                 topPadding: 14
                 bottomPadding: 14
-                text: line.words.length > 0 ? line.words : "♪"
+                readonly property bool wordHighlight: line.active && Player.activeLyricWord >= 0
+                textFormat: wordHighlight ? Text.StyledText : Text.PlainText
+                text: wordHighlight ? Player.lyrics.highlightedWords(line.index, Player.activeLyricWord)
+                                    : line.words.length > 0 ? line.words : "♪"
                 wrapMode: Text.Wrap
                 font.pixelSize: 30
                 font.weight: Font.Bold

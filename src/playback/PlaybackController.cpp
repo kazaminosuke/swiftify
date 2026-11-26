@@ -29,6 +29,7 @@
 #include <QLoggingCategory>
 #include <QQmlEngine>
 #include <QRandomGenerator>
+#include <QSaveFile>
 
 #include <QCoroTimer>
 
@@ -1399,11 +1400,63 @@ void PlaybackController::setLyricsDelayMs(int delayMs)
 
 void PlaybackController::updateActiveLyricLine()
 {
-    const int index = m_lyrics ? m_lyrics->lineIndex(qint64(m_livePositionMs) - m_lyricsDelayMs) : -1;
-    if (index != m_activeLyricIndex) {
-        m_activeLyricIndex = index;
+    const qint64 position = qint64(m_livePositionMs) - m_lyricsDelayMs;
+    const int index = m_lyrics ? m_lyrics->lineIndex(position) : -1;
+    const int word = m_lyrics ? m_lyrics->wordIndex(index, position) : -1;
+    const bool changedLine = index != m_activeLyricIndex;
+    const bool changedWord = word != m_activeLyricWord;
+    m_activeLyricIndex = index;
+    m_activeLyricWord = word;
+    if (changedLine) {
         emit activeLyricIndexChanged();
     }
+    if (changedWord) {
+        emit activeLyricWordChanged();
+    }
+}
+
+bool PlaybackController::canEditLyrics() const
+{
+    return m_currentSong && m_currentSong->isLocalFile()
+        && m_lyrics && m_lyrics->synchronized && !m_lyrics->lines.isEmpty() && !m_loadingLyrics;
+}
+
+QVariantMap PlaybackController::lyricLineForEditing(int index) const
+{
+    if (!canEditLyrics() || index < 0 || index >= m_lyrics->lines.size()) {
+        return {};
+    }
+    const auto &line = m_lyrics->lines.at(index);
+    return {{QStringLiteral("time"), QString::number(line.startTimeMs)},
+            {QStringLiteral("text"), line.words}, {QStringLiteral("track"), m_currentSong->uri}};
+}
+
+bool PlaybackController::saveLyricLine(int index, QString timeMs, QString text)
+{
+    if (!canEditLyrics()) {
+        return false;
+    }
+    bool valid = false;
+    const quint32 time = timeMs.toUInt(&valid);
+    Lyrics edited = *m_lyrics;
+    if (!valid || !edited.editLine(index, time, text)) {
+        reportError(QStringLiteral("Saving lyrics"), QStringLiteral("Enter a time in milliseconds and nonempty text."));
+        return false;
+    }
+
+    const QByteArray document = edited.toTtml();
+    QSaveFile file(Lyrics::editedPath(m_currentSong->localPath()));
+    if (document.isEmpty() || !file.open(QIODevice::WriteOnly)
+        || file.write(document) != document.size() || !file.commit()) {
+        reportError(QStringLiteral("Saving lyrics"), QStringLiteral("The local lyrics file could not be written."));
+        return false;
+    }
+    edited.provider = QStringLiteral("TTML file");
+    m_lyrics = std::move(edited);
+    m_lyricsModel->setLines(m_lyrics->lines);
+    updateActiveLyricLine();
+    emit lyricsChanged();
+    return true;
 }
 
 void PlaybackController::seekToLyricLine(int index)
