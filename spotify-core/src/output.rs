@@ -77,6 +77,7 @@ struct LocalShared {
     /// an f32's bits
     volume: AtomicU32,
     paused: AtomicBool,
+    lost: AtomicBool,
 }
 
 impl LocalShared {
@@ -104,20 +105,28 @@ impl LocalOutput {
         let (commands, received) = mpsc::channel::<bool>();
         let (opened, opening) = mpsc::sync_channel(1);
         let filled = Arc::clone(&shared);
+        let failed = Arc::clone(&shared);
+        let controlled = Arc::clone(&shared);
         thread::Builder::new()
             .name("swiftify-local-output".to_owned())
             .spawn(move || {
-                let Some((stream, rate)) = open_stereo_stream(move |out| filled.fill(out)) else {
+                let Some((stream, rate)) = swiftify_native_audio::device::open_stereo_stream(
+                    move |out, _| filled.fill(out),
+                    move |_| failed.lost.store(true, Ordering::Release),
+                ) else {
                     let _ = opened.send(None);
                     return;
                 };
                 let _ = opened.send(Some(rate));
                 // until every handle has gone
                 while let Ok(play) = received.recv() {
-                    if play {
-                        let _ = stream.play();
+                    let stopped = if play {
+                        stream.play().is_err()
                     } else {
-                        let _ = stream.pause();
+                        stream.pause().is_err()
+                    };
+                    if stopped {
+                        controlled.lost.store(true, Ordering::Release);
                     }
                 }
             })
@@ -132,11 +141,9 @@ impl LocalOutput {
 
     fn command(&self, play: bool) {
         self.shared.paused.store(!play, Ordering::Release);
-        let _ = self
-            .commands
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .send(play);
+        if self.commands.lock().unwrap_or_else(PoisonError::into_inner).send(play).is_err() {
+            self.shared.lost.store(true, Ordering::Release);
+        }
     }
 
     /// what plays next, in place of whatever played before
@@ -172,6 +179,10 @@ impl LocalOutput {
     /// the device's rate, which a source at the same rate plays at untouched
     pub(crate) fn rate(&self) -> u32 {
         self.rate
+    }
+
+    pub(crate) fn is_lost(&self) -> bool {
+        self.shared.lost.load(Ordering::Acquire)
     }
 
     pub(crate) fn is_paused(&self) -> bool {

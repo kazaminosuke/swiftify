@@ -130,3 +130,17 @@ sources remain open.
 | --- | --- | --- |
 | 2026-11-20 18:55 | Start, official Codex App Server `account/rateLimits/read` | HTTP 401. Remaining usage unavailable. |
 | 2026-11-20 19:00 | Codec smoke tests, official App Server | HTTP 401. No percentage inferred. |
+
+### WebM Vorbis and EQ input format
+
+The EBML decoder selects Opus or Vorbis from the actual audio track. The
+existing Ogg/Opus and Rodio paths remain available. Single-track WebM
+continues to use segment duration when track duration is missing. Segment
+duration can reflect another track in a multitrack file, so the decoder
+does not use it as the audio duration in that case.
+
+Symphonia Vorbis 0.6.1 is MPL-2.0 and is listed in the shipped Rust notice.
+The desktop DSP now sets EQ coefficients and channel state from its input
+format. Local files and librespot still supply stereo PCM at 44.1 kHz to
+the tempo/pitch chain. Live input uses its actual rate and channel count
+for EQ, with bands above Nyquist bypassed.
