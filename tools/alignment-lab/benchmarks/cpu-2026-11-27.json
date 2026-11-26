@@ -1,0 +1,2112 @@
+{
+  "version": 1,
+  "date_jst": "2026-11-27",
+  "environment": {
+    "os": "Debian 13",
+    "cpu": "Intel Xeon Platinum 8573C",
+    "cgroup_cpu_quota": 2,
+    "inference_threads": 2,
+    "python": "3.12.14",
+    "onnxruntime": "1.32.0",
+    "numpy": "2.5.5",
+    "pykakasi": "2.3.0",
+    "ffmpeg": "7.1.5",
+    "gpu": null
+  },
+  "cases": [
+    {
+      "case": "jsut-070",
+      "kind": "singing",
+      "language": "ja",
+      "model": "heuristic",
+      "report": {
+        "version": 1,
+        "model": "heuristic",
+        "requested_device": "cpu",
+        "threads": 2,
+        "runs": [
+          {
+            "device": "cpu",
+            "metrics": {
+              "phase": "cold",
+              "load_ms": 0.006,
+              "preprocess_ms": 381.357,
+              "inference_ms": 0.059,
+              "total_ms": 381.967,
+              "rtf": 0.028935,
+              "duration_ms": 13201,
+              "model_bytes": 0,
+              "peak_ram_bytes": 130871296,
+              "peak_vram_bytes": null
+            },
+            "accuracy": {
+              "lines": {
+                "reference": 2,
+                "matched": 2,
+                "missing": 0,
+                "start": {
+                  "mean_ms": 863,
+                  "median_ms": 863.0,
+                  "p95_ms": 1265
+                },
+                "end": {
+                  "mean_ms": 1023.5,
+                  "median_ms": 1023.5,
+                  "p95_ms": 1316
+                }
+              },
+              "words": {
+                "reference": 9,
+                "matched": 9,
+                "missing": 0,
+                "start": {
+                  "mean_ms": 1172.111,
+                  "median_ms": 941,
+                  "p95_ms": 2923
+                },
+                "end": {
+                  "mean_ms": 1207.778,
+                  "median_ms": 941,
+                  "p95_ms": 2923
+                }
+              },
+              "syllables": {
+                "reference": 27,
+                "matched": 27,
+                "missing": 0,
+                "start": {
+                  "mean_ms": 1253.333,
+                  "median_ms": 1089,
+                  "p95_ms": 2800
+                },
+                "end": {
+                  "mean_ms": 1265.222,
+                  "median_ms": 1089,
+                  "p95_ms": 2800
+                }
+              }
+            },
+            "error": null
+          },
+          {
+            "device": "cpu",
+            "metrics": {
+              "phase": "warm",
+              "load_ms": 0.0,
+              "preprocess_ms": 89.742,
+              "inference_ms": 0.051,
+              "total_ms": 90.106,
+              "rtf": 0.006826,
+              "duration_ms": 13201,
+              "model_bytes": 0,
+              "peak_ram_bytes": 123154432,
+              "peak_vram_bytes": null
+            },
+            "accuracy": {
+              "lines": {
+                "reference": 2,
+                "matched": 2,
+                "missing": 0,
+                "start": {
+                  "mean_ms": 863,
+                  "median_ms": 863.0,
+                  "p95_ms": 1265
+                },
+                "end": {
+                  "mean_ms": 1023.5,
+                  "median_ms": 1023.5,
+                  "p95_ms": 1316
+                }
+              },
+              "words": {
+                "reference": 9,
+                "matched": 9,
+                "missing": 0,
+                "start": {
+                  "mean_ms": 1172.111,
+                  "median_ms": 941,
+                  "p95_ms": 2923
+                },
+                "end": {
+                  "mean_ms": 1207.778,
+                  "median_ms": 941,
+                  "p95_ms": 2923
+                }
+              },
+              "syllables": {
+                "reference": 27,
+                "matched": 27,
+                "missing": 0,
+                "start": {
+                  "mean_ms": 1253.333,
+                  "median_ms": 1089,
+                  "p95_ms": 2800
+                },
+                "end": {
+                  "mean_ms": 1265.222,
+                  "median_ms": 1089,
+                  "p95_ms": 2800
+                }
+              }
+            },
+            "error": null
+          },
+          {
+            "device": "cpu",
+            "metrics": {
+              "phase": "warm",
+              "load_ms": 0.0,
+              "preprocess_ms": 89.231,
+              "inference_ms": 0.053,
+              "total_ms": 89.541,
+              "rtf": 0.006783,
+              "duration_ms": 13201,
+              "model_bytes": 0,
+              "peak_ram_bytes": 124047360,
+              "peak_vram_bytes": null
+            },
+            "accuracy": {
+              "lines": {
+                "reference": 2,
+                "matched": 2,
+                "missing": 0,
+                "start": {
+                  "mean_ms": 863,
+                  "median_ms": 863.0,
+                  "p95_ms": 1265
+                },
+                "end": {
+                  "mean_ms": 1023.5,
+                  "median_ms": 1023.5,
+                  "p95_ms": 1316
+                }
+              },
+              "words": {
+                "reference": 9,
+                "matched": 9,
+                "missing": 0,
+                "start": {
+                  "mean_ms": 1172.111,
+                  "median_ms": 941,
+                  "p95_ms": 2923
+                },
+                "end": {
+                  "mean_ms": 1207.778,
+                  "median_ms": 941,
+                  "p95_ms": 2923
+                }
+              },
+              "syllables": {
+                "reference": 27,
+                "matched": 27,
+                "missing": 0,
+                "start": {
+                  "mean_ms": 1253.333,
+                  "median_ms": 1089,
+                  "p95_ms": 2800
+                },
+                "end": {
+                  "mean_ms": 1265.222,
+                  "median_ms": 1089,
+                  "p95_ms": 2800
+                }
+              }
+            },
+            "error": null
+          }
+        ],
+        "failure_rate": 0.0
+      }
+    },
+    {
+      "case": "jsut-070",
+      "kind": "singing",
+      "language": "ja",
+      "model": "mms-fp32",
+      "report": {
+        "version": 1,
+        "model": "mms-fp32",
+        "requested_device": "cpu",
+        "threads": 2,
+        "runs": [
+          {
+            "device": "cpu",
+            "metrics": {
+              "phase": "cold",
+              "load_ms": 6351.622,
+              "preprocess_ms": 356.021,
+              "inference_ms": 2491.246,
+              "total_ms": 9199.378,
+              "rtf": 0.69687,
+              "duration_ms": 13201,
+              "model_bytes": 1262408964,
+              "peak_ram_bytes": 2411552768,
+              "peak_vram_bytes": null
+            },
+            "accuracy": {
+              "lines": {
+                "reference": 2,
+                "matched": 2,
+                "missing": 0,
+                "start": {
+                  "mean_ms": 32.5,
+                  "median_ms": 32.5,
+                  "p95_ms": 35
+                },
+                "end": {
+                  "mean_ms": 582.5,
+                  "median_ms": 582.5,
+                  "p95_ms": 1005
+                }
+              },
+              "words": {
+                "reference": 9,
+                "matched": 9,
+                "missing": 0,
+                "start": {
+                  "mean_ms": 75,
+                  "median_ms": 60,
+                  "p95_ms": 260
+                },
+                "end": {
+                  "mean_ms": 252.778,
+                  "median_ms": 170,
+                  "p95_ms": 1005
+                }
+              },
+              "syllables": {
+                "reference": 27,
+                "matched": 27,
+                "missing": 0,
+                "start": {
+                  "mean_ms": 60.556,
+                  "median_ms": 55,
+                  "p95_ms": 135
+                },
+                "end": {
+                  "mean_ms": 219.074,
+                  "median_ms": 155,
+                  "p95_ms": 1005
+                }
+              }
+            },
+            "error": null
+          },
+          {
+            "device": "cpu",
+            "metrics": {
+              "phase": "warm",
+              "load_ms": 0.0,
+              "preprocess_ms": 116.574,
+              "inference_ms": 2495.114,
+              "total_ms": 2612.009,
+              "rtf": 0.197864,
+              "duration_ms": 13201,
+              "model_bytes": 1262408964,
+              "peak_ram_bytes": 2583994368,
+              "peak_vram_bytes": null
+            },
+            "accuracy": {
+              "lines": {
+                "reference": 2,
+                "matched": 2,
+                "missing": 0,
+                "start": {
+                  "mean_ms": 32.5,
+                  "median_ms": 32.5,
+                  "p95_ms": 35
+                },
+                "end": {
+                  "mean_ms": 582.5,
+                  "median_ms": 582.5,
+                  "p95_ms": 1005
+                }
+              },
+              "words": {
+                "reference": 9,
+                "matched": 9,
+                "missing": 0,
+                "start": {
+                  "mean_ms": 75,
+                  "median_ms": 60,
+                  "p95_ms": 260
+                },
+                "end": {
+                  "mean_ms": 252.778,
+                  "median_ms": 170,
+                  "p95_ms": 1005
+                }
+              },
+              "syllables": {
+                "reference": 27,
+                "matched": 27,
+                "missing": 0,
+                "start": {
+                  "mean_ms": 60.556,
+                  "median_ms": 55,
+                  "p95_ms": 135
+                },
+                "end": {
+                  "mean_ms": 219.074,
+                  "median_ms": 155,
+                  "p95_ms": 1005
+                }
+              }
+            },
+            "error": null
+          },
+          {
+            "device": "cpu",
+            "metrics": {
+              "phase": "warm",
+              "load_ms": 0.0,
+              "preprocess_ms": 111.564,
+              "inference_ms": 3365.95,
+              "total_ms": 3477.875,
+              "rtf": 0.263455,
+              "duration_ms": 13201,
+              "model_bytes": 1262408964,
+              "peak_ram_bytes": 2583998464,
+              "peak_vram_bytes": null
+            },
+            "accuracy": {
+              "lines": {
+                "reference": 2,
+                "matched": 2,
+                "missing": 0,
+                "start": {
+                  "mean_ms": 32.5,
+                  "median_ms": 32.5,
+                  "p95_ms": 35
+                },
+                "end": {
+                  "mean_ms": 582.5,
+                  "median_ms": 582.5,
+                  "p95_ms": 1005
+                }
+              },
+              "words": {
+                "reference": 9,
+                "matched": 9,
+                "missing": 0,
+                "start": {
+                  "mean_ms": 75,
+                  "median_ms": 60,
+                  "p95_ms": 260
+                },
+                "end": {
+                  "mean_ms": 252.778,
+                  "median_ms": 170,
+                  "p95_ms": 1005
+                }
+              },
+              "syllables": {
+                "reference": 27,
+                "matched": 27,
+                "missing": 0,
+                "start": {
+                  "mean_ms": 60.556,
+                  "median_ms": 55,
+                  "p95_ms": 135
+                },
+                "end": {
+                  "mean_ms": 219.074,
+                  "median_ms": 155,
+                  "p95_ms": 1005
+                }
+              }
+            },
+            "error": null
+          }
+        ],
+        "failure_rate": 0.0
+      }
+    },
+    {
+      "case": "jsut-070",
+      "kind": "singing",
+      "language": "ja",
+      "model": "mms-q8",
+      "report": {
+        "version": 1,
+        "model": "mms-q8",
+        "requested_device": "cpu",
+        "threads": 2,
+        "runs": [
+          {
+            "device": "cpu",
+            "metrics": {
+              "phase": "cold",
+              "load_ms": 1281.478,
+              "preprocess_ms": 659.447,
+              "inference_ms": 1563.847,
+              "total_ms": 3505.501,
+              "rtf": 0.265548,
+              "duration_ms": 13201,
+              "model_bytes": 356289622,
+              "peak_ram_bytes": 1088606208,
+              "peak_vram_bytes": null
+            },
+            "accuracy": {
+              "lines": {
+                "reference": 2,
+                "matched": 2,
+                "missing": 0,
+                "start": {
+                  "mean_ms": 32.5,
+                  "median_ms": 32.5,
+                  "p95_ms": 35
+                },
+                "end": {
+                  "mean_ms": 582.5,
+                  "median_ms": 582.5,
+                  "p95_ms": 1005
+                }
+              },
+              "words": {
+                "reference": 9,
+                "matched": 9,
+                "missing": 0,
+                "start": {
+                  "mean_ms": 75,
+                  "median_ms": 60,
+                  "p95_ms": 260
+                },
+                "end": {
+                  "mean_ms": 252.778,
+                  "median_ms": 170,
+                  "p95_ms": 1005
+                }
+              },
+              "syllables": {
+                "reference": 27,
+                "matched": 27,
+                "missing": 0,
+                "start": {
+                  "mean_ms": 61.296,
+                  "median_ms": 55,
+                  "p95_ms": 135
+                },
+                "end": {
+                  "mean_ms": 219.815,
+                  "median_ms": 155,
+                  "p95_ms": 1005
+                }
+              }
+            },
+            "error": null
+          },
+          {
+            "device": "cpu",
+            "metrics": {
+              "phase": "warm",
+              "load_ms": 0.0,
+              "preprocess_ms": 106.688,
+              "inference_ms": 1489.267,
+              "total_ms": 1596.384,
+              "rtf": 0.120929,
+              "duration_ms": 13201,
+              "model_bytes": 356289622,
+              "peak_ram_bytes": 1259024384,
+              "peak_vram_bytes": null
+            },
+            "accuracy": {
+              "lines": {
+                "reference": 2,
+                "matched": 2,
+                "missing": 0,
+                "start": {
+                  "mean_ms": 32.5,
+                  "median_ms": 32.5,
+                  "p95_ms": 35
+                },
+                "end": {
+                  "mean_ms": 582.5,
+                  "median_ms": 582.5,
+                  "p95_ms": 1005
+                }
+              },
+              "words": {
+                "reference": 9,
+                "matched": 9,
+                "missing": 0,
+                "start": {
+                  "mean_ms": 75,
+                  "median_ms": 60,
+                  "p95_ms": 260
+                },
+                "end": {
+                  "mean_ms": 252.778,
+                  "median_ms": 170,
+                  "p95_ms": 1005
+                }
+              },
+              "syllables": {
+                "reference": 27,
+                "matched": 27,
+                "missing": 0,
+                "start": {
+                  "mean_ms": 61.296,
+                  "median_ms": 55,
+                  "p95_ms": 135
+                },
+                "end": {
+                  "mean_ms": 219.815,
+                  "median_ms": 155,
+                  "p95_ms": 1005
+                }
+              }
+            },
+            "error": null
+          },
+          {
+            "device": "cpu",
+            "metrics": {
+              "phase": "warm",
+              "load_ms": 0.0,
+              "preprocess_ms": 101.086,
+              "inference_ms": 1293.741,
+              "total_ms": 1395.119,
+              "rtf": 0.105683,
+              "duration_ms": 13201,
+              "model_bytes": 356289622,
+              "peak_ram_bytes": 1259032576,
+              "peak_vram_bytes": null
+            },
+            "accuracy": {
+              "lines": {
+                "reference": 2,
+                "matched": 2,
+                "missing": 0,
+                "start": {
+                  "mean_ms": 32.5,
+                  "median_ms": 32.5,
+                  "p95_ms": 35
+                },
+                "end": {
+                  "mean_ms": 582.5,
+                  "median_ms": 582.5,
+                  "p95_ms": 1005
+                }
+              },
+              "words": {
+                "reference": 9,
+                "matched": 9,
+                "missing": 0,
+                "start": {
+                  "mean_ms": 75,
+                  "median_ms": 60,
+                  "p95_ms": 260
+                },
+                "end": {
+                  "mean_ms": 252.778,
+                  "median_ms": 170,
+                  "p95_ms": 1005
+                }
+              },
+              "syllables": {
+                "reference": 27,
+                "matched": 27,
+                "missing": 0,
+                "start": {
+                  "mean_ms": 61.296,
+                  "median_ms": 55,
+                  "p95_ms": 135
+                },
+                "end": {
+                  "mean_ms": 219.815,
+                  "median_ms": 155,
+                  "p95_ms": 1005
+                }
+              }
+            },
+            "error": null
+          }
+        ],
+        "failure_rate": 0.0
+      }
+    },
+    {
+      "case": "jsut-070",
+      "kind": "singing",
+      "language": "ja",
+      "model": "hubert-ja-q4",
+      "report": {
+        "version": 1,
+        "model": "hubert-ja-q4",
+        "requested_device": "cpu",
+        "threads": 2,
+        "runs": [
+          {
+            "device": "cpu",
+            "metrics": {
+              "phase": "cold",
+              "load_ms": 316.44,
+              "preprocess_ms": 408.215,
+              "inference_ms": 967.053,
+              "total_ms": 1692.1,
+              "rtf": 0.12818,
+              "duration_ms": 13201,
+              "model_bytes": 63010793,
+              "peak_ram_bytes": 496828416,
+              "peak_vram_bytes": null
+            },
+            "accuracy": {
+              "lines": {
+                "reference": 2,
+                "matched": 2,
+                "missing": 0,
+                "start": {
+                  "mean_ms": 42.5,
+                  "median_ms": 42.5,
+                  "p95_ms": 70
+                },
+                "end": {
+                  "mean_ms": 632.5,
+                  "median_ms": 632.5,
+                  "p95_ms": 1045
+                }
+              },
+              "words": {
+                "reference": 9,
+                "matched": 9,
+                "missing": 0,
+                "start": {
+                  "mean_ms": 77.222,
+                  "median_ms": 60,
+                  "p95_ms": 280
+                },
+                "end": {
+                  "mean_ms": 303.889,
+                  "median_ms": 230,
+                  "p95_ms": 1045
+                }
+              },
+              "syllables": {
+                "reference": 27,
+                "matched": 27,
+                "missing": 0,
+                "start": {
+                  "mean_ms": 63.519,
+                  "median_ms": 50,
+                  "p95_ms": 100
+                },
+                "end": {
+                  "mean_ms": 265.741,
+                  "median_ms": 200,
+                  "p95_ms": 1045
+                }
+              }
+            },
+            "error": null
+          },
+          {
+            "device": "cpu",
+            "metrics": {
+              "phase": "warm",
+              "load_ms": 0.0,
+              "preprocess_ms": 103.894,
+              "inference_ms": 1073.479,
+              "total_ms": 1177.739,
+              "rtf": 0.089216,
+              "duration_ms": 13201,
+              "model_bytes": 63010793,
+              "peak_ram_bytes": 694542336,
+              "peak_vram_bytes": null
+            },
+            "accuracy": {
+              "lines": {
+                "reference": 2,
+                "matched": 2,
+                "missing": 0,
+                "start": {
+                  "mean_ms": 42.5,
+                  "median_ms": 42.5,
+                  "p95_ms": 70
+                },
+                "end": {
+                  "mean_ms": 632.5,
+                  "median_ms": 632.5,
+                  "p95_ms": 1045
+                }
+              },
+              "words": {
+                "reference": 9,
+                "matched": 9,
+                "missing": 0,
+                "start": {
+                  "mean_ms": 77.222,
+                  "median_ms": 60,
+                  "p95_ms": 280
+                },
+                "end": {
+                  "mean_ms": 303.889,
+                  "median_ms": 230,
+                  "p95_ms": 1045
+                }
+              },
+              "syllables": {
+                "reference": 27,
+                "matched": 27,
+                "missing": 0,
+                "start": {
+                  "mean_ms": 63.519,
+                  "median_ms": 50,
+                  "p95_ms": 100
+                },
+                "end": {
+                  "mean_ms": 265.741,
+                  "median_ms": 200,
+                  "p95_ms": 1045
+                }
+              }
+            },
+            "error": null
+          },
+          {
+            "device": "cpu",
+            "metrics": {
+              "phase": "warm",
+              "load_ms": 0.0,
+              "preprocess_ms": 110.232,
+              "inference_ms": 1026.515,
+              "total_ms": 1137.16,
+              "rtf": 0.086142,
+              "duration_ms": 13201,
+              "model_bytes": 63010793,
+              "peak_ram_bytes": 694558720,
+              "peak_vram_bytes": null
+            },
+            "accuracy": {
+              "lines": {
+                "reference": 2,
+                "matched": 2,
+                "missing": 0,
+                "start": {
+                  "mean_ms": 42.5,
+                  "median_ms": 42.5,
+                  "p95_ms": 70
+                },
+                "end": {
+                  "mean_ms": 632.5,
+                  "median_ms": 632.5,
+                  "p95_ms": 1045
+                }
+              },
+              "words": {
+                "reference": 9,
+                "matched": 9,
+                "missing": 0,
+                "start": {
+                  "mean_ms": 77.222,
+                  "median_ms": 60,
+                  "p95_ms": 280
+                },
+                "end": {
+                  "mean_ms": 303.889,
+                  "median_ms": 230,
+                  "p95_ms": 1045
+                }
+              },
+              "syllables": {
+                "reference": 27,
+                "matched": 27,
+                "missing": 0,
+                "start": {
+                  "mean_ms": 63.519,
+                  "median_ms": 50,
+                  "p95_ms": 100
+                },
+                "end": {
+                  "mean_ms": 265.741,
+                  "median_ms": 200,
+                  "p95_ms": 1045
+                }
+              }
+            },
+            "error": null
+          }
+        ],
+        "failure_rate": 0.0
+      }
+    },
+    {
+      "case": "jsut-070-mix",
+      "kind": "singing",
+      "language": "ja",
+      "model": "heuristic",
+      "report": {
+        "version": 1,
+        "model": "heuristic",
+        "requested_device": "cpu",
+        "threads": 2,
+        "runs": [
+          {
+            "device": "cpu",
+            "metrics": {
+              "phase": "cold",
+              "load_ms": 0.005,
+              "preprocess_ms": 306.983,
+              "inference_ms": 0.058,
+              "total_ms": 307.326,
+              "rtf": 0.023281,
+              "duration_ms": 13201,
+              "model_bytes": 0,
+              "peak_ram_bytes": 122064896,
+              "peak_vram_bytes": null
+            },
+            "accuracy": {
+              "lines": {
+                "reference": 2,
+                "matched": 2,
+                "missing": 0,
+                "start": {
+                  "mean_ms": 863,
+                  "median_ms": 863.0,
+                  "p95_ms": 1265
+                },
+                "end": {
+                  "mean_ms": 1023.5,
+                  "median_ms": 1023.5,
+                  "p95_ms": 1316
+                }
+              },
+              "words": {
+                "reference": 9,
+                "matched": 9,
+                "missing": 0,
+                "start": {
+                  "mean_ms": 1172.111,
+                  "median_ms": 941,
+                  "p95_ms": 2923
+                },
+                "end": {
+                  "mean_ms": 1207.778,
+                  "median_ms": 941,
+                  "p95_ms": 2923
+                }
+              },
+              "syllables": {
+                "reference": 27,
+                "matched": 27,
+                "missing": 0,
+                "start": {
+                  "mean_ms": 1253.333,
+                  "median_ms": 1089,
+                  "p95_ms": 2800
+                },
+                "end": {
+                  "mean_ms": 1265.222,
+                  "median_ms": 1089,
+                  "p95_ms": 2800
+                }
+              }
+            },
+            "error": null
+          },
+          {
+            "device": "cpu",
+            "metrics": {
+              "phase": "warm",
+              "load_ms": 0.0,
+              "preprocess_ms": 113.08,
+              "inference_ms": 0.088,
+              "total_ms": 114.034,
+              "rtf": 0.008638,
+              "duration_ms": 13201,
+              "model_bytes": 0,
+              "peak_ram_bytes": 122781696,
+              "peak_vram_bytes": null
+            },
+            "accuracy": {
+              "lines": {
+                "reference": 2,
+                "matched": 2,
+                "missing": 0,
+                "start": {
+                  "mean_ms": 863,
+                  "median_ms": 863.0,
+                  "p95_ms": 1265
+                },
+                "end": {
+                  "mean_ms": 1023.5,
+                  "median_ms": 1023.5,
+                  "p95_ms": 1316
+                }
+              },
+              "words": {
+                "reference": 9,
+                "matched": 9,
+                "missing": 0,
+                "start": {
+                  "mean_ms": 1172.111,
+                  "median_ms": 941,
+                  "p95_ms": 2923
+                },
+                "end": {
+                  "mean_ms": 1207.778,
+                  "median_ms": 941,
+                  "p95_ms": 2923
+                }
+              },
+              "syllables": {
+                "reference": 27,
+                "matched": 27,
+                "missing": 0,
+                "start": {
+                  "mean_ms": 1253.333,
+                  "median_ms": 1089,
+                  "p95_ms": 2800
+                },
+                "end": {
+                  "mean_ms": 1265.222,
+                  "median_ms": 1089,
+                  "p95_ms": 2800
+                }
+              }
+            },
+            "error": null
+          },
+          {
+            "device": "cpu",
+            "metrics": {
+              "phase": "warm",
+              "load_ms": 0.0,
+              "preprocess_ms": 80.873,
+              "inference_ms": 0.084,
+              "total_ms": 81.235,
+              "rtf": 0.006154,
+              "duration_ms": 13201,
+              "model_bytes": 0,
+              "peak_ram_bytes": 123674624,
+              "peak_vram_bytes": null
+            },
+            "accuracy": {
+              "lines": {
+                "reference": 2,
+                "matched": 2,
+                "missing": 0,
+                "start": {
+                  "mean_ms": 863,
+                  "median_ms": 863.0,
+                  "p95_ms": 1265
+                },
+                "end": {
+                  "mean_ms": 1023.5,
+                  "median_ms": 1023.5,
+                  "p95_ms": 1316
+                }
+              },
+              "words": {
+                "reference": 9,
+                "matched": 9,
+                "missing": 0,
+                "start": {
+                  "mean_ms": 1172.111,
+                  "median_ms": 941,
+                  "p95_ms": 2923
+                },
+                "end": {
+                  "mean_ms": 1207.778,
+                  "median_ms": 941,
+                  "p95_ms": 2923
+                }
+              },
+              "syllables": {
+                "reference": 27,
+                "matched": 27,
+                "missing": 0,
+                "start": {
+                  "mean_ms": 1253.333,
+                  "median_ms": 1089,
+                  "p95_ms": 2800
+                },
+                "end": {
+                  "mean_ms": 1265.222,
+                  "median_ms": 1089,
+                  "p95_ms": 2800
+                }
+              }
+            },
+            "error": null
+          }
+        ],
+        "failure_rate": 0.0
+      }
+    },
+    {
+      "case": "jsut-070-mix",
+      "kind": "singing",
+      "language": "ja",
+      "model": "mms-fp32",
+      "report": {
+        "version": 1,
+        "model": "mms-fp32",
+        "requested_device": "cpu",
+        "threads": 2,
+        "runs": [
+          {
+            "device": "cpu",
+            "metrics": {
+              "phase": "cold",
+              "load_ms": 7558.037,
+              "preprocess_ms": 819.965,
+              "inference_ms": 7600.839,
+              "total_ms": 15979.689,
+              "rtf": 1.210491,
+              "duration_ms": 13201,
+              "model_bytes": 1262408964,
+              "peak_ram_bytes": 2413297664,
+              "peak_vram_bytes": null
+            },
+            "accuracy": {
+              "lines": {
+                "reference": 2,
+                "matched": 2,
+                "missing": 0,
+                "start": {
+                  "mean_ms": 42.5,
+                  "median_ms": 42.5,
+                  "p95_ms": 55
+                },
+                "end": {
+                  "mean_ms": 562.5,
+                  "median_ms": 562.5,
+                  "p95_ms": 965
+                }
+              },
+              "words": {
+                "reference": 9,
+                "matched": 9,
+                "missing": 0,
+                "start": {
+                  "mean_ms": 77.222,
+                  "median_ms": 60,
+                  "p95_ms": 260
+                },
+                "end": {
+                  "mean_ms": 248.333,
+                  "median_ms": 170,
+                  "p95_ms": 965
+                }
+              },
+              "syllables": {
+                "reference": 27,
+                "matched": 27,
+                "missing": 0,
+                "start": {
+                  "mean_ms": 61.296,
+                  "median_ms": 55,
+                  "p95_ms": 135
+                },
+                "end": {
+                  "mean_ms": 219.074,
+                  "median_ms": 155,
+                  "p95_ms": 965
+                }
+              }
+            },
+            "error": null
+          },
+          {
+            "device": "cpu",
+            "metrics": {
+              "phase": "warm",
+              "load_ms": 0.0,
+              "preprocess_ms": 258.758,
+              "inference_ms": 8111.365,
+              "total_ms": 8370.558,
+              "rtf": 0.634085,
+              "duration_ms": 13201,
+              "model_bytes": 1262408964,
+              "peak_ram_bytes": 2583703552,
+              "peak_vram_bytes": null
+            },
+            "accuracy": {
+              "lines": {
+                "reference": 2,
+                "matched": 2,
+                "missing": 0,
+                "start": {
+                  "mean_ms": 42.5,
+                  "median_ms": 42.5,
+                  "p95_ms": 55
+                },
+                "end": {
+                  "mean_ms": 562.5,
+                  "median_ms": 562.5,
+                  "p95_ms": 965
+                }
+              },
+              "words": {
+                "reference": 9,
+                "matched": 9,
+                "missing": 0,
+                "start": {
+                  "mean_ms": 77.222,
+                  "median_ms": 60,
+                  "p95_ms": 260
+                },
+                "end": {
+                  "mean_ms": 248.333,
+                  "median_ms": 170,
+                  "p95_ms": 965
+                }
+              },
+              "syllables": {
+                "reference": 27,
+                "matched": 27,
+                "missing": 0,
+                "start": {
+                  "mean_ms": 61.296,
+                  "median_ms": 55,
+                  "p95_ms": 135
+                },
+                "end": {
+                  "mean_ms": 219.074,
+                  "median_ms": 155,
+                  "p95_ms": 965
+                }
+              }
+            },
+            "error": null
+          },
+          {
+            "device": "cpu",
+            "metrics": {
+              "phase": "warm",
+              "load_ms": 0.0,
+              "preprocess_ms": 132.161,
+              "inference_ms": 5308.262,
+              "total_ms": 5440.736,
+              "rtf": 0.412146,
+              "duration_ms": 13201,
+              "model_bytes": 1262408964,
+              "peak_ram_bytes": 2583711744,
+              "peak_vram_bytes": null
+            },
+            "accuracy": {
+              "lines": {
+                "reference": 2,
+                "matched": 2,
+                "missing": 0,
+                "start": {
+                  "mean_ms": 42.5,
+                  "median_ms": 42.5,
+                  "p95_ms": 55
+                },
+                "end": {
+                  "mean_ms": 562.5,
+                  "median_ms": 562.5,
+                  "p95_ms": 965
+                }
+              },
+              "words": {
+                "reference": 9,
+                "matched": 9,
+                "missing": 0,
+                "start": {
+                  "mean_ms": 77.222,
+                  "median_ms": 60,
+                  "p95_ms": 260
+                },
+                "end": {
+                  "mean_ms": 248.333,
+                  "median_ms": 170,
+                  "p95_ms": 965
+                }
+              },
+              "syllables": {
+                "reference": 27,
+                "matched": 27,
+                "missing": 0,
+                "start": {
+                  "mean_ms": 61.296,
+                  "median_ms": 55,
+                  "p95_ms": 135
+                },
+                "end": {
+                  "mean_ms": 219.074,
+                  "median_ms": 155,
+                  "p95_ms": 965
+                }
+              }
+            },
+            "error": null
+          }
+        ],
+        "failure_rate": 0.0
+      }
+    },
+    {
+      "case": "jsut-070-mix",
+      "kind": "singing",
+      "language": "ja",
+      "model": "mms-q8",
+      "report": {
+        "version": 1,
+        "model": "mms-q8",
+        "requested_device": "cpu",
+        "threads": 2,
+        "runs": [
+          {
+            "device": "cpu",
+            "metrics": {
+              "phase": "cold",
+              "load_ms": 2564.62,
+              "preprocess_ms": 584.037,
+              "inference_ms": 5350.212,
+              "total_ms": 8499.399,
+              "rtf": 0.643845,
+              "duration_ms": 13201,
+              "model_bytes": 356289622,
+              "peak_ram_bytes": 1094905856,
+              "peak_vram_bytes": null
+            },
+            "accuracy": {
+              "lines": {
+                "reference": 2,
+                "matched": 2,
+                "missing": 0,
+                "start": {
+                  "mean_ms": 52.5,
+                  "median_ms": 52.5,
+                  "p95_ms": 55
+                },
+                "end": {
+                  "mean_ms": 572.5,
+                  "median_ms": 572.5,
+                  "p95_ms": 985
+                }
+              },
+              "words": {
+                "reference": 9,
+                "matched": 9,
+                "missing": 0,
+                "start": {
+                  "mean_ms": 79.444,
+                  "median_ms": 60,
+                  "p95_ms": 260
+                },
+                "end": {
+                  "mean_ms": 250.556,
+                  "median_ms": 170,
+                  "p95_ms": 985
+                }
+              },
+              "syllables": {
+                "reference": 27,
+                "matched": 27,
+                "missing": 0,
+                "start": {
+                  "mean_ms": 62.037,
+                  "median_ms": 55,
+                  "p95_ms": 135
+                },
+                "end": {
+                  "mean_ms": 219.815,
+                  "median_ms": 155,
+                  "p95_ms": 985
+                }
+              }
+            },
+            "error": null
+          },
+          {
+            "device": "cpu",
+            "metrics": {
+              "phase": "warm",
+              "load_ms": 0.0,
+              "preprocess_ms": 189.196,
+              "inference_ms": 5604.772,
+              "total_ms": 5794.445,
+              "rtf": 0.43894,
+              "duration_ms": 13201,
+              "model_bytes": 356289622,
+              "peak_ram_bytes": 1267585024,
+              "peak_vram_bytes": null
+            },
+            "accuracy": {
+              "lines": {
+                "reference": 2,
+                "matched": 2,
+                "missing": 0,
+                "start": {
+                  "mean_ms": 52.5,
+                  "median_ms": 52.5,
+                  "p95_ms": 55
+                },
+                "end": {
+                  "mean_ms": 572.5,
+                  "median_ms": 572.5,
+                  "p95_ms": 985
+                }
+              },
+              "words": {
+                "reference": 9,
+                "matched": 9,
+                "missing": 0,
+                "start": {
+                  "mean_ms": 79.444,
+                  "median_ms": 60,
+                  "p95_ms": 260
+                },
+                "end": {
+                  "mean_ms": 250.556,
+                  "median_ms": 170,
+                  "p95_ms": 985
+                }
+              },
+              "syllables": {
+                "reference": 27,
+                "matched": 27,
+                "missing": 0,
+                "start": {
+                  "mean_ms": 62.037,
+                  "median_ms": 55,
+                  "p95_ms": 135
+                },
+                "end": {
+                  "mean_ms": 219.815,
+                  "median_ms": 155,
+                  "p95_ms": 985
+                }
+              }
+            },
+            "error": null
+          },
+          {
+            "device": "cpu",
+            "metrics": {
+              "phase": "warm",
+              "load_ms": 0.0,
+              "preprocess_ms": 172.597,
+              "inference_ms": 5098.542,
+              "total_ms": 5271.549,
+              "rtf": 0.39933,
+              "duration_ms": 13201,
+              "model_bytes": 356289622,
+              "peak_ram_bytes": 1267597312,
+              "peak_vram_bytes": null
+            },
+            "accuracy": {
+              "lines": {
+                "reference": 2,
+                "matched": 2,
+                "missing": 0,
+                "start": {
+                  "mean_ms": 52.5,
+                  "median_ms": 52.5,
+                  "p95_ms": 55
+                },
+                "end": {
+                  "mean_ms": 572.5,
+                  "median_ms": 572.5,
+                  "p95_ms": 985
+                }
+              },
+              "words": {
+                "reference": 9,
+                "matched": 9,
+                "missing": 0,
+                "start": {
+                  "mean_ms": 79.444,
+                  "median_ms": 60,
+                  "p95_ms": 260
+                },
+                "end": {
+                  "mean_ms": 250.556,
+                  "median_ms": 170,
+                  "p95_ms": 985
+                }
+              },
+              "syllables": {
+                "reference": 27,
+                "matched": 27,
+                "missing": 0,
+                "start": {
+                  "mean_ms": 62.037,
+                  "median_ms": 55,
+                  "p95_ms": 135
+                },
+                "end": {
+                  "mean_ms": 219.815,
+                  "median_ms": 155,
+                  "p95_ms": 985
+                }
+              }
+            },
+            "error": null
+          }
+        ],
+        "failure_rate": 0.0
+      }
+    },
+    {
+      "case": "jsut-070-mix",
+      "kind": "singing",
+      "language": "ja",
+      "model": "hubert-ja-q4",
+      "report": {
+        "version": 1,
+        "model": "hubert-ja-q4",
+        "requested_device": "cpu",
+        "threads": 2,
+        "runs": [
+          {
+            "device": "cpu",
+            "metrics": {
+              "phase": "cold",
+              "load_ms": 950.616,
+              "preprocess_ms": 594.665,
+              "inference_ms": 3404.427,
+              "total_ms": 4950.476,
+              "rtf": 0.375008,
+              "duration_ms": 13201,
+              "model_bytes": 63010793,
+              "peak_ram_bytes": 496877568,
+              "peak_vram_bytes": null
+            },
+            "accuracy": {
+              "lines": {
+                "reference": 2,
+                "matched": 2,
+                "missing": 0,
+                "start": {
+                  "mean_ms": 42.5,
+                  "median_ms": 42.5,
+                  "p95_ms": 70
+                },
+                "end": {
+                  "mean_ms": 632.5,
+                  "median_ms": 632.5,
+                  "p95_ms": 1045
+                }
+              },
+              "words": {
+                "reference": 9,
+                "matched": 9,
+                "missing": 0,
+                "start": {
+                  "mean_ms": 79.444,
+                  "median_ms": 70,
+                  "p95_ms": 280
+                },
+                "end": {
+                  "mean_ms": 306.111,
+                  "median_ms": 230,
+                  "p95_ms": 1045
+                }
+              },
+              "syllables": {
+                "reference": 27,
+                "matched": 27,
+                "missing": 0,
+                "start": {
+                  "mean_ms": 64.259,
+                  "median_ms": 50,
+                  "p95_ms": 100
+                },
+                "end": {
+                  "mean_ms": 265.741,
+                  "median_ms": 200,
+                  "p95_ms": 1045
+                }
+              }
+            },
+            "error": null
+          },
+          {
+            "device": "cpu",
+            "metrics": {
+              "phase": "warm",
+              "load_ms": 0.0,
+              "preprocess_ms": 132.653,
+              "inference_ms": 3297.317,
+              "total_ms": 3430.423,
+              "rtf": 0.259861,
+              "duration_ms": 13201,
+              "model_bytes": 63010793,
+              "peak_ram_bytes": 694587392,
+              "peak_vram_bytes": null
+            },
+            "accuracy": {
+              "lines": {
+                "reference": 2,
+                "matched": 2,
+                "missing": 0,
+                "start": {
+                  "mean_ms": 42.5,
+                  "median_ms": 42.5,
+                  "p95_ms": 70
+                },
+                "end": {
+                  "mean_ms": 632.5,
+                  "median_ms": 632.5,
+                  "p95_ms": 1045
+                }
+              },
+              "words": {
+                "reference": 9,
+                "matched": 9,
+                "missing": 0,
+                "start": {
+                  "mean_ms": 79.444,
+                  "median_ms": 70,
+                  "p95_ms": 280
+                },
+                "end": {
+                  "mean_ms": 306.111,
+                  "median_ms": 230,
+                  "p95_ms": 1045
+                }
+              },
+              "syllables": {
+                "reference": 27,
+                "matched": 27,
+                "missing": 0,
+                "start": {
+                  "mean_ms": 64.259,
+                  "median_ms": 50,
+                  "p95_ms": 100
+                },
+                "end": {
+                  "mean_ms": 265.741,
+                  "median_ms": 200,
+                  "p95_ms": 1045
+                }
+              }
+            },
+            "error": null
+          },
+          {
+            "device": "cpu",
+            "metrics": {
+              "phase": "warm",
+              "load_ms": 0.0,
+              "preprocess_ms": 190.388,
+              "inference_ms": 2799.292,
+              "total_ms": 2990.068,
+              "rtf": 0.226503,
+              "duration_ms": 13201,
+              "model_bytes": 63010793,
+              "peak_ram_bytes": 696311808,
+              "peak_vram_bytes": null
+            },
+            "accuracy": {
+              "lines": {
+                "reference": 2,
+                "matched": 2,
+                "missing": 0,
+                "start": {
+                  "mean_ms": 42.5,
+                  "median_ms": 42.5,
+                  "p95_ms": 70
+                },
+                "end": {
+                  "mean_ms": 632.5,
+                  "median_ms": 632.5,
+                  "p95_ms": 1045
+                }
+              },
+              "words": {
+                "reference": 9,
+                "matched": 9,
+                "missing": 0,
+                "start": {
+                  "mean_ms": 79.444,
+                  "median_ms": 70,
+                  "p95_ms": 280
+                },
+                "end": {
+                  "mean_ms": 306.111,
+                  "median_ms": 230,
+                  "p95_ms": 1045
+                }
+              },
+              "syllables": {
+                "reference": 27,
+                "matched": 27,
+                "missing": 0,
+                "start": {
+                  "mean_ms": 64.259,
+                  "median_ms": 50,
+                  "p95_ms": 100
+                },
+                "end": {
+                  "mean_ms": 265.741,
+                  "median_ms": 200,
+                  "p95_ms": 1045
+                }
+              }
+            },
+            "error": null
+          }
+        ],
+        "failure_rate": 0.0
+      }
+    },
+    {
+      "case": "fleurs-ja-1519",
+      "kind": "speech",
+      "language": "ja",
+      "model": "heuristic",
+      "report": {
+        "version": 1,
+        "model": "heuristic",
+        "requested_device": "cpu",
+        "threads": 2,
+        "runs": [
+          {
+            "device": "cpu",
+            "metrics": {
+              "phase": "cold",
+              "load_ms": 0.005,
+              "preprocess_ms": 810.385,
+              "inference_ms": 0.086,
+              "total_ms": 810.687,
+              "rtf": 0.073035,
+              "duration_ms": 11100,
+              "model_bytes": 0,
+              "peak_ram_bytes": 137736192,
+              "peak_vram_bytes": null
+            },
+            "accuracy": null,
+            "error": null
+          },
+          {
+            "device": "cpu",
+            "metrics": {
+              "phase": "warm",
+              "load_ms": 0.0,
+              "preprocess_ms": 76.748,
+              "inference_ms": 0.076,
+              "total_ms": 77.003,
+              "rtf": 0.006937,
+              "duration_ms": 11100,
+              "model_bytes": 0,
+              "peak_ram_bytes": 122568704,
+              "peak_vram_bytes": null
+            },
+            "accuracy": null,
+            "error": null
+          },
+          {
+            "device": "cpu",
+            "metrics": {
+              "phase": "warm",
+              "load_ms": 0.0,
+              "preprocess_ms": 76.798,
+              "inference_ms": 0.069,
+              "total_ms": 77.026,
+              "rtf": 0.006939,
+              "duration_ms": 11100,
+              "model_bytes": 0,
+              "peak_ram_bytes": 123322368,
+              "peak_vram_bytes": null
+            },
+            "accuracy": null,
+            "error": null
+          }
+        ],
+        "failure_rate": 0.0
+      }
+    },
+    {
+      "case": "fleurs-ja-1519",
+      "kind": "speech",
+      "language": "ja",
+      "model": "mms-fp32",
+      "report": {
+        "version": 1,
+        "model": "mms-fp32",
+        "requested_device": "cpu",
+        "threads": 2,
+        "runs": [
+          {
+            "device": "cpu",
+            "metrics": {
+              "phase": "cold",
+              "load_ms": 8863.97,
+              "preprocess_ms": 495.498,
+              "inference_ms": 1964.402,
+              "total_ms": 11324.325,
+              "rtf": 1.020209,
+              "duration_ms": 11100,
+              "model_bytes": 1262408964,
+              "peak_ram_bytes": 2387779584,
+              "peak_vram_bytes": null
+            },
+            "accuracy": null,
+            "error": null
+          },
+          {
+            "device": "cpu",
+            "metrics": {
+              "phase": "warm",
+              "load_ms": 0.0,
+              "preprocess_ms": 77.794,
+              "inference_ms": 2839.857,
+              "total_ms": 2917.974,
+              "rtf": 0.262881,
+              "duration_ms": 11100,
+              "model_bytes": 1262408964,
+              "peak_ram_bytes": 2533294080,
+              "peak_vram_bytes": null
+            },
+            "accuracy": null,
+            "error": null
+          },
+          {
+            "device": "cpu",
+            "metrics": {
+              "phase": "warm",
+              "load_ms": 0.0,
+              "preprocess_ms": 138.081,
+              "inference_ms": 2043.245,
+              "total_ms": 2181.723,
+              "rtf": 0.196552,
+              "duration_ms": 11100,
+              "model_bytes": 1262408964,
+              "peak_ram_bytes": 2533314560,
+              "peak_vram_bytes": null
+            },
+            "accuracy": null,
+            "error": null
+          }
+        ],
+        "failure_rate": 0.0
+      }
+    },
+    {
+      "case": "fleurs-ja-1519",
+      "kind": "speech",
+      "language": "ja",
+      "model": "mms-q8",
+      "report": {
+        "version": 1,
+        "model": "mms-q8",
+        "requested_device": "cpu",
+        "threads": 2,
+        "runs": [
+          {
+            "device": "cpu",
+            "metrics": {
+              "phase": "cold",
+              "load_ms": 1038.849,
+              "preprocess_ms": 317.368,
+              "inference_ms": 1106.602,
+              "total_ms": 2463.128,
+              "rtf": 0.221903,
+              "duration_ms": 11100,
+              "model_bytes": 356289622,
+              "peak_ram_bytes": 1056661504,
+              "peak_vram_bytes": null
+            },
+            "accuracy": null,
+            "error": null
+          },
+          {
+            "device": "cpu",
+            "metrics": {
+              "phase": "warm",
+              "load_ms": 0.0,
+              "preprocess_ms": 90.214,
+              "inference_ms": 1074.474,
+              "total_ms": 1164.933,
+              "rtf": 0.104949,
+              "duration_ms": 11100,
+              "model_bytes": 356289622,
+              "peak_ram_bytes": 1202180096,
+              "peak_vram_bytes": null
+            },
+            "accuracy": null,
+            "error": null
+          },
+          {
+            "device": "cpu",
+            "metrics": {
+              "phase": "warm",
+              "load_ms": 0.0,
+              "preprocess_ms": 123.001,
+              "inference_ms": 932.699,
+              "total_ms": 1055.955,
+              "rtf": 0.095131,
+              "duration_ms": 11100,
+              "model_bytes": 356289622,
+              "peak_ram_bytes": 1202200576,
+              "peak_vram_bytes": null
+            },
+            "accuracy": null,
+            "error": null
+          }
+        ],
+        "failure_rate": 0.0
+      }
+    },
+    {
+      "case": "fleurs-en-1548",
+      "kind": "speech",
+      "language": "en",
+      "model": "heuristic",
+      "report": {
+        "version": 1,
+        "model": "heuristic",
+        "requested_device": "cpu",
+        "threads": 2,
+        "runs": [
+          {
+            "device": "cpu",
+            "metrics": {
+              "phase": "cold",
+              "load_ms": 0.005,
+              "preprocess_ms": 76.233,
+              "inference_ms": 0.039,
+              "total_ms": 76.485,
+              "rtf": 0.011695,
+              "duration_ms": 6540,
+              "model_bytes": 0,
+              "peak_ram_bytes": 15679488,
+              "peak_vram_bytes": null
+            },
+            "accuracy": null,
+            "error": null
+          },
+          {
+            "device": "cpu",
+            "metrics": {
+              "phase": "warm",
+              "load_ms": 0.0,
+              "preprocess_ms": 60.212,
+              "inference_ms": 0.036,
+              "total_ms": 60.322,
+              "rtf": 0.009224,
+              "duration_ms": 6540,
+              "model_bytes": 0,
+              "peak_ram_bytes": 15687680,
+              "peak_vram_bytes": null
+            },
+            "accuracy": null,
+            "error": null
+          },
+          {
+            "device": "cpu",
+            "metrics": {
+              "phase": "warm",
+              "load_ms": 0.0,
+              "preprocess_ms": 56.271,
+              "inference_ms": 0.032,
+              "total_ms": 56.373,
+              "rtf": 0.00862,
+              "duration_ms": 6540,
+              "model_bytes": 0,
+              "peak_ram_bytes": 15687680,
+              "peak_vram_bytes": null
+            },
+            "accuracy": null,
+            "error": null
+          }
+        ],
+        "failure_rate": 0.0
+      }
+    },
+    {
+      "case": "fleurs-en-1548",
+      "kind": "speech",
+      "language": "en",
+      "model": "mms-fp32",
+      "report": {
+        "version": 1,
+        "model": "mms-fp32",
+        "requested_device": "cpu",
+        "threads": 2,
+        "runs": [
+          {
+            "device": "cpu",
+            "metrics": {
+              "phase": "cold",
+              "load_ms": 4372.714,
+              "preprocess_ms": 80.887,
+              "inference_ms": 1872.456,
+              "total_ms": 6326.272,
+              "rtf": 0.96732,
+              "duration_ms": 6540,
+              "model_bytes": 1262408964,
+              "peak_ram_bytes": 2228609024,
+              "peak_vram_bytes": null
+            },
+            "accuracy": null,
+            "error": null
+          },
+          {
+            "device": "cpu",
+            "metrics": {
+              "phase": "warm",
+              "load_ms": 0.0,
+              "preprocess_ms": 76.584,
+              "inference_ms": 1846.421,
+              "total_ms": 1923.166,
+              "rtf": 0.294062,
+              "duration_ms": 6540,
+              "model_bytes": 1262408964,
+              "peak_ram_bytes": 2314346496,
+              "peak_vram_bytes": null
+            },
+            "accuracy": null,
+            "error": null
+          },
+          {
+            "device": "cpu",
+            "metrics": {
+              "phase": "warm",
+              "load_ms": 0.0,
+              "preprocess_ms": 74.751,
+              "inference_ms": 1958.827,
+              "total_ms": 2033.714,
+              "rtf": 0.310965,
+              "duration_ms": 6540,
+              "model_bytes": 1262408964,
+              "peak_ram_bytes": 2316390400,
+              "peak_vram_bytes": null
+            },
+            "accuracy": null,
+            "error": null
+          }
+        ],
+        "failure_rate": 0.0
+      }
+    },
+    {
+      "case": "fleurs-en-1548",
+      "kind": "speech",
+      "language": "en",
+      "model": "mms-q8",
+      "report": {
+        "version": 1,
+        "model": "mms-q8",
+        "requested_device": "cpu",
+        "threads": 2,
+        "runs": [
+          {
+            "device": "cpu",
+            "metrics": {
+              "phase": "cold",
+              "load_ms": 1079.173,
+              "preprocess_ms": 78.657,
+              "inference_ms": 555.437,
+              "total_ms": 1713.498,
+              "rtf": 0.262003,
+              "duration_ms": 6540,
+              "model_bytes": 356289622,
+              "peak_ram_bytes": 843468800,
+              "peak_vram_bytes": null
+            },
+            "accuracy": null,
+            "error": null
+          },
+          {
+            "device": "cpu",
+            "metrics": {
+              "phase": "warm",
+              "load_ms": 0.0,
+              "preprocess_ms": 80.509,
+              "inference_ms": 501.586,
+              "total_ms": 582.221,
+              "rtf": 0.089025,
+              "duration_ms": 6540,
+              "model_bytes": 356289622,
+              "peak_ram_bytes": 929206272,
+              "peak_vram_bytes": null
+            },
+            "accuracy": null,
+            "error": null
+          },
+          {
+            "device": "cpu",
+            "metrics": {
+              "phase": "warm",
+              "load_ms": 0.0,
+              "preprocess_ms": 81.215,
+              "inference_ms": 490.083,
+              "total_ms": 571.449,
+              "rtf": 0.087378,
+              "duration_ms": 6540,
+              "model_bytes": 356289622,
+              "peak_ram_bytes": 929210368,
+              "peak_vram_bytes": null
+            },
+            "accuracy": null,
+            "error": null
+          }
+        ],
+        "failure_rate": 0.0
+      }
+    },
+    {
+      "case": "fleurs-ja-1519",
+      "kind": "speech",
+      "language": "ja",
+      "model": "hubert-ja-q4",
+      "report": {
+        "version": 1,
+        "model": "hubert-ja-q4",
+        "requested_device": "cpu",
+        "threads": 2,
+        "runs": [
+          {
+            "device": "cpu",
+            "metrics": {
+              "phase": "cold",
+              "load_ms": 476.023,
+              "preprocess_ms": 375.44,
+              "inference_ms": 1323.89,
+              "total_ms": 2175.944,
+              "rtf": 0.196031,
+              "duration_ms": 11100,
+              "model_bytes": 63010793,
+              "peak_ram_bytes": 466714624,
+              "peak_vram_bytes": null
+            },
+            "accuracy": null,
+            "error": null
+          },
+          {
+            "device": "cpu",
+            "metrics": {
+              "phase": "warm",
+              "load_ms": 0.0,
+              "preprocess_ms": 72.345,
+              "inference_ms": 1408.939,
+              "total_ms": 1481.705,
+              "rtf": 0.133487,
+              "duration_ms": 11100,
+              "model_bytes": 63010793,
+              "peak_ram_bytes": 639545344,
+              "peak_vram_bytes": null
+            },
+            "accuracy": null,
+            "error": null
+          },
+          {
+            "device": "cpu",
+            "metrics": {
+              "phase": "warm",
+              "load_ms": 0.0,
+              "preprocess_ms": 82.629,
+              "inference_ms": 1259.936,
+              "total_ms": 1342.895,
+              "rtf": 0.120982,
+              "duration_ms": 11100,
+              "model_bytes": 63010793,
+              "peak_ram_bytes": 639553536,
+              "peak_vram_bytes": null
+            },
+            "accuracy": null,
+            "error": null
+          }
+        ],
+        "failure_rate": 0.0
+      }
+    }
+  ]
+}
