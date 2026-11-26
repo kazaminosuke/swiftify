@@ -4,11 +4,17 @@
 
 use std::{
     f32::consts::TAU,
-    fs, thread,
+    fs,
+    io::{self, Cursor, Read, Seek, SeekFrom},
+    sync::Arc,
+    thread,
     time::{Duration, Instant},
 };
 
-use swiftify_native_audio::{AudioError, Player, State};
+use swiftify_native_audio::{
+    AudioError, Player, State,
+    media::{MediaInput, MediaProvider},
+};
 
 /// Explicitly select a test device when running this in a headless environment.
 /// CI uses ALSA's null device, so decoding and the device callback still run.
@@ -49,6 +55,52 @@ fn decodes_seeks_and_drains_through_the_audio_device() {
     ));
     assert_eq!(player.snapshot(), loaded);
 
+    struct SeekRejected(Vec<u8>);
+    struct Reader(Cursor<Vec<u8>>);
+
+    impl Read for Reader {
+        fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
+            self.0.read(buffer)
+        }
+    }
+
+    impl Seek for Reader {
+        fn seek(&mut self, position: SeekFrom) -> io::Result<u64> {
+            if matches!(position, SeekFrom::Start(offset) if offset > 1024)
+                || matches!(position, SeekFrom::Current(offset) if offset > 1024)
+            {
+                return Err(io::Error::new(
+                    io::ErrorKind::PermissionDenied,
+                    "private range failure",
+                ));
+            }
+            self.0.seek(position)
+        }
+    }
+
+    impl MediaProvider for SeekRejected {
+        fn open(&self) -> io::Result<MediaInput> {
+            Ok(MediaInput::new(
+                Reader(Cursor::new(self.0.clone())),
+                Some(self.0.len() as u64),
+                Some("wav".to_owned()),
+            ))
+        }
+    }
+
+    player
+        .load_source(Arc::new(SeekRejected(fs::read(&path).unwrap())))
+        .unwrap();
+    let before_failed_seek = player.snapshot();
+    let error = player.seek(Duration::from_millis(750)).unwrap_err();
+    assert!(matches!(
+        error,
+        AudioError::InputSeek(io::ErrorKind::PermissionDenied)
+    ));
+    assert!(!error.to_string().contains("private range failure"));
+    assert_eq!(player.snapshot(), before_failed_seek);
+
+    player.load_file(&path).unwrap();
     let seek = Duration::from_millis(500);
     player.seek(seek).unwrap();
     assert_eq!(player.snapshot().state, State::Paused);
@@ -89,12 +141,7 @@ fn decodes_seeks_and_drains_through_the_audio_device() {
 #[test]
 #[ignore = "requires an audio output device"]
 fn media_provider_reopens_without_losing_the_track_on_error() {
-    use std::io::Cursor;
-    use std::sync::{
-        Arc,
-        atomic::{AtomicBool, AtomicUsize, Ordering},
-    };
-    use swiftify_native_audio::media::{MediaInput, MediaProvider};
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
     struct Provider {
         deny: AtomicBool,
