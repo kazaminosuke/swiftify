@@ -22,6 +22,7 @@ param(
     [string]$MingwPath,
     [string]$BuildRoot,
     [string]$InstallPrefix = "$env:LOCALAPPDATA\Programs\Swiftify",
+    [switch]$TestYouTube,
     [ValidateRange(1, 256)]
     [int]$Jobs = [Math]::Max(1, [Math]::Min(8, [Environment]::ProcessorCount))
 )
@@ -158,6 +159,7 @@ function Invoke-WindowsBuild {
         [string]$MingwPath,
         [string]$BuildRoot,
         [string]$InstallPrefix,
+        [switch]$TestYouTube,
         [int]$Jobs
     )
 
@@ -269,14 +271,22 @@ function Invoke-WindowsBuild {
         }
 
         Write-Host 'Building Swiftify...'
+        $buildTests = if ($TestYouTube) { 'ON' } else { 'OFF' }
         $appBuild = Join-Path $buildDirectory 'swiftify'
-        Invoke-Native $cmake (@('-S', $sourceRoot, '-B', $appBuild) + $commonOptions + @("-DRust_TOOLCHAIN=$rustToolchain", "-DRust_CARGO_TARGET=$rustTarget", '-DSWIFTIFY_BUNDLED_QT=ON', "-DCMAKE_INSTALL_PREFIX=$($InstallPrefix.Replace('\', '/'))")) | Out-Host
-        Invoke-Native $cmake @('--build', $appBuild, '--parallel', "$Jobs") | Out-Host
+        Invoke-Native $cmake (@('-S', $sourceRoot, '-B', $appBuild) + $commonOptions + @("-DRust_TOOLCHAIN=$rustToolchain", "-DRust_CARGO_TARGET=$rustTarget", "-DBUILD_TESTING=$buildTests", '-DSWIFTIFY_BUNDLED_QT=ON', "-DCMAKE_INSTALL_PREFIX=$($InstallPrefix.Replace('\', '/'))")) | Out-Host
+        Invoke-Native $cmake @('--build', $appBuild, '--target', 'swiftify', '--parallel', "$Jobs") | Out-Host
+        if ($TestYouTube) {
+            $ctest = Find-Application 'ctest.exe' @((Join-Path (Split-Path -Parent $cmake) 'ctest.exe'))
+            Invoke-Native $cmake @('--build', $appBuild, '--target', 'tst_youtubeapi', 'tst_googleauthorization',
+                'tst_youtubeview', '--parallel', "$Jobs") | Out-Host
+            Invoke-Native $ctest @('--test-dir', $appBuild, '--output-on-failure', '--no-tests=error', '-R',
+                'tst_(youtubeapi|googleauthorization|youtubeview)|translations_catalog|qml_statements|icon_names') | Out-Host
+        }
         Invoke-Native $cmake @('--install', $appBuild) | Out-Host
         if (-not (Test-Path -LiteralPath (Join-Path $InstallPrefix 'share\licenses\swiftify\LICENSE') -PathType Leaf)) {
             throw 'The license was not installed.'
         }
-        foreach ($license in @('material-color-utilities.LICENSE', 'rounded-polygon-qmljs.LICENSE', 'material-symbols.LICENSE', 'rust-crates.LICENSE', 'qt.LICENSE', 'qt.NOTICE', 'qtkeychain.LICENSE', 'qcoro.LICENSE')) {
+        foreach ($license in @('material-color-utilities.LICENSE', 'rounded-polygon-qmljs.LICENSE', 'material-symbols.LICENSE', 'rust-crates.LICENSE', 'qt.LICENSE', 'qt.NOTICE', 'qtkeychain.LICENSE', 'qcoro.LICENSE', 'YouTubeBrand.NOTICE')) {
             if (-not (Test-Path -LiteralPath (Join-Path $InstallPrefix "share\licenses\swiftify\$license") -PathType Leaf)) {
                 throw "$license was not installed."
             }
@@ -284,6 +294,9 @@ function Invoke-WindowsBuild {
         $installBin = Join-Path $InstallPrefix 'bin'
         $executable = Join-Path $installBin 'swiftify.exe'
         Invoke-Native $deployQt @('--release', '--force', '--compiler-runtime', '--qmldir', (Join-Path $sourceRoot 'qml'), $executable) | Out-Host
+        if (-not (Test-Path -LiteralPath (Join-Path $installBin 'Qt6NetworkAuth.dll') -PathType Leaf)) {
+            Copy-Item -LiteralPath "$QtPath\bin\Qt6NetworkAuth.dll" -Destination $installBin -Force
+        }
         Copy-Item -Path "$dependencyPrefix\bin\*.dll" -Destination $installBin -Force
         if ($rustTarget -eq 'x86_64-pc-windows-msvc') {
             # windeployqt only leaves msvc's runtime installer, so the runtime
@@ -323,7 +336,7 @@ function Invoke-WindowsBuild {
 
 if ($MyInvocation.InvocationName -ne '.') {
     try {
-        Invoke-WindowsBuild -QtPath $QtPath -MingwPath $MingwPath -BuildRoot $BuildRoot -InstallPrefix $InstallPrefix -Jobs $Jobs
+        Invoke-WindowsBuild -QtPath $QtPath -MingwPath $MingwPath -BuildRoot $BuildRoot -InstallPrefix $InstallPrefix -TestYouTube:$TestYouTube -Jobs $Jobs
     } catch {
         Write-Error $_ -ErrorAction Continue
         exit 1
