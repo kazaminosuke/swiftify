@@ -449,7 +449,7 @@ impl SpectrumSink {
             output: None,
             spectrum,
             output_volume,
-            dsp: DspProcessor::new(dsp),
+            dsp: DspProcessor::new(dsp, SAMPLE_RATE, NUM_CHANNELS as u16),
             health,
             converter: None,
             spent: Vec::with_capacity(Self::QUEUE_HIGH_WATER * 2),
