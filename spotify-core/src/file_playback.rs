@@ -22,15 +22,22 @@
 use std::{
     collections::VecDeque,
     path::PathBuf,
-    sync::{Arc, atomic::{AtomicBool, Ordering}},
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
     time::Duration,
 };
 
+use librespot::playback::SAMPLE_RATE;
 use rodio::source::UniformSourceIterator;
-use swiftify_native_audio::{decode::FileSource, render::{PcmFrame, RenderQueue}};
+use swiftify_native_audio::{
+    decode::FileSource,
+    render::{PcmFrame, RenderQueue},
+};
 
 use crate::dsp::{DspProcessor, SharedDsp};
-use crate::spectrum::{ANALYSIS_SAMPLE_COUNT, SharedSpectrum};
+use crate::spectrum::{AnalysisWindow, RateConverter, SharedSpectrum};
 
 #[derive(Clone)]
 pub(crate) struct LocalPlayback {
@@ -54,9 +61,9 @@ pub(crate) struct LocalTrackSource {
     block_tempo: f64,
     replay_gain: f32,
     normalise: Arc<AtomicBool>,
-    analysis_samples: [f32; ANALYSIS_SAMPLE_COUNT],
-    analysis_index: usize,
-    analysis_enabled: bool,
+    analysis: AnalysisWindow,
+    spectrum_pcm: Vec<f32>,
+    spectrum_rate: Option<RateConverter>,
     dsp: DspProcessor,
     processed: VecDeque<f32>,
     drained: bool,
@@ -82,9 +89,10 @@ impl LocalTrackSource {
             block_tempo: 1.0,
             replay_gain,
             normalise,
-            analysis_samples: [0.0; ANALYSIS_SAMPLE_COUNT],
-            analysis_index: 0,
-            analysis_enabled: false,
+            analysis: AnalysisWindow::default(),
+            spectrum_pcm: Vec::new(),
+            spectrum_rate: (sample_rate != SAMPLE_RATE)
+                .then(|| RateConverter::from_rates(sample_rate, SAMPLE_RATE)),
             dsp: DspProcessor::new(dsp, sample_rate, 2),
             processed: VecDeque::new(),
             drained: false,
@@ -99,8 +107,12 @@ impl LocalTrackSource {
             if block.is_empty() {
                 self.drained = true;
                 let outstanding = ((self.decoded_frames as f64 - self.media_frames)
-                    / self.block_tempo).round() as usize;
-                self.processed.extend(self.dsp.finish(outstanding.min(self.sample_rate as usize / 4)));
+                    / self.block_tempo)
+                    .round() as usize;
+                self.processed.extend(
+                    self.dsp
+                        .finish(outstanding.min(self.sample_rate as usize / 4)),
+                );
                 return;
             }
             self.decoded_frames += (block.len() / 2) as u64;
@@ -116,46 +128,37 @@ impl LocalTrackSource {
 
     pub(crate) fn read(&mut self, output: &mut [PcmFrame]) -> usize {
         let mut count = 0;
-        for target in output {
+        for target in output.iter_mut() {
             if self.processed.is_empty() {
                 self.fill();
             }
-            let Some(left) = self.processed.pop_front() else { break };
-            let Some(right) = self.processed.pop_front() else { break };
-            self.media_frames = (self.media_frames + self.block_tempo).min(self.decoded_frames as f64);
+            let Some(left) = self.processed.pop_front() else {
+                break;
+            };
+            let Some(right) = self.processed.pop_front() else {
+                break;
+            };
+            self.media_frames =
+                (self.media_frames + self.block_tempo).min(self.decoded_frames as f64);
             let time = Duration::from_secs_f64(self.media_frames / f64::from(self.sample_rate));
             *target = PcmFrame {
                 stereo: [left, right],
                 media_end: self.offset.saturating_add(time),
             };
             count += 1;
-            self.analyse(&[left, right]);
+        }
+        if self.spectrum.is_enabled() {
+            self.analysis.follow(&self.spectrum);
+            self.spectrum_pcm.clear();
+            self.spectrum_pcm
+                .extend(output[..count].iter().flat_map(|frame| frame.stereo));
+            if let Some(converter) = &mut self.spectrum_rate {
+                let normalized = converter.convert(&self.spectrum_pcm);
+                self.analysis.feed(&self.spectrum, 1.0, &normalized);
+            } else {
+                self.analysis.feed(&self.spectrum, 1.0, &self.spectrum_pcm);
+            }
         }
         count
-    }
-
-    /// hands the analysis what is about to play, a run at a time
-    fn analyse(&mut self, mut samples: &[f32]) {
-        while !samples.is_empty() {
-            if self.analysis_index == 0 {
-                self.analysis_enabled = self.spectrum.is_enabled();
-            }
-            let taken = samples
-                .len()
-                .min(ANALYSIS_SAMPLE_COUNT - self.analysis_index);
-            if self.analysis_enabled {
-                self.analysis_samples[self.analysis_index..self.analysis_index + taken]
-                    .copy_from_slice(&samples[..taken]);
-            }
-            self.analysis_index += taken;
-            samples = &samples[taken..];
-            if self.analysis_index == ANALYSIS_SAMPLE_COUNT {
-                if self.analysis_enabled {
-                    self.spectrum
-                        .queue_interleaved_f32(self.analysis_samples, 1.0);
-                }
-                self.analysis_index = 0;
-            }
-        }
     }
 }

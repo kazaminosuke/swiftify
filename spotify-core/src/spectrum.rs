@@ -355,7 +355,7 @@ impl PlayedChunk {
 /// its first frame and running past its last: about two frames too many a
 /// packet at 48 khz, so music played 0.4% slow, with a small jump in the wave
 /// at every packet's edge, some forty times a second.
-struct RateConverter {
+pub(crate) struct RateConverter {
     to: u32,
     /// input frames an output frame steps over
     step: f64,
@@ -371,9 +371,13 @@ impl RateConverter {
     const CHANNELS: usize = NUM_CHANNELS as usize;
 
     fn new(to: u32) -> Self {
+        Self::from_rates(SAMPLE_RATE, to)
+    }
+
+    pub(crate) fn from_rates(from: u32, to: u32) -> Self {
         Self {
             to,
-            step: f64::from(SAMPLE_RATE) / f64::from(to),
+            step: f64::from(from) / f64::from(to),
             position: 0.0,
             previous: [0.0; NUM_CHANNELS as usize],
             primed: false,
@@ -387,7 +391,7 @@ impl RateConverter {
     }
 
     /// interleaved frames in, interleaved frames out
-    fn convert(&mut self, input: &[f32]) -> Vec<f32> {
+    pub(crate) fn convert(&mut self, input: &[f32]) -> Vec<f32> {
         let frames = input.len() / Self::CHANNELS;
         if frames == 0 {
             return Vec::new();
@@ -669,7 +673,7 @@ struct DecodedChunk {
 }
 
 /// the analysis window being filled, carried from chunk to chunk
-struct AnalysisWindow {
+pub(crate) struct AnalysisWindow {
     samples: [f32; ANALYSIS_SAMPLE_COUNT],
     index: usize,
     enabled: bool,
@@ -690,7 +694,7 @@ impl Default for AnalysisWindow {
 
 impl AnalysisWindow {
     /// starts afresh if the levels were cleared since it was begun
-    fn follow(&mut self, spectrum: &SharedSpectrum) {
+    pub(crate) fn follow(&mut self, spectrum: &SharedSpectrum) {
         let generation = spectrum.generation();
         if generation != self.generation {
             self.generation = generation;
@@ -700,7 +704,7 @@ impl AnalysisWindow {
 
     /// takes samples in runs, a window's room at a time, and queues each
     /// window as it fills
-    fn feed(&mut self, spectrum: &SharedSpectrum, output_gain: f64, mut samples: &[f32]) {
+    pub(crate) fn feed(&mut self, spectrum: &SharedSpectrum, output_gain: f64, mut samples: &[f32]) {
         while !samples.is_empty() {
             if self.index == 0 {
                 self.enabled = spectrum.is_enabled();

@@ -154,7 +154,7 @@ where
                     fill(scratch, timing);
                     for (out, pair) in chunk
                         .chunks_exact_mut(channels)
-                        .zip(scratch.chunks_exact(2))
+                        .zip(scratch.as_chunks::<2>().0)
                     {
                         let left = pair[0];
                         let right = pair[1];

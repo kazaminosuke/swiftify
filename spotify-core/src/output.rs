@@ -28,7 +28,10 @@ use std::{
     time::{Duration, Instant},
 };
 
-use rodio::{Source, cpal::{self, traits::StreamTrait}};
+use rodio::{
+    Source,
+    cpal::{self, traits::StreamTrait},
+};
 use swiftify_native_audio::render::{PcmFrame, RenderPosition, RenderQueue, frame_time};
 
 pub(crate) fn open_stereo_stream<F>(mut fill: F) -> Option<(rodio::cpal::Stream, u32)>
@@ -140,7 +143,11 @@ impl LocalOutput {
                 };
                 let _ = opened.send(Some(rate));
                 while let Ok(play) = received.recv() {
-                    let stopped = if play { stream.play().is_err() } else { stream.pause().is_err() };
+                    let stopped = if play {
+                        stream.play().is_err()
+                    } else {
+                        stream.pause().is_err()
+                    };
                     if stopped {
                         controlled.lost.store(true, Ordering::Release);
                     }
@@ -148,7 +155,11 @@ impl LocalOutput {
             })
             .ok()?;
         let rate = opening.recv().ok()??;
-        Some(Self { shared, commands, rate })
+        Some(Self {
+            shared,
+            commands,
+            rate,
+        })
     }
 
     fn command(&self, slot: &mut Slot, play: bool) {
@@ -179,7 +190,10 @@ impl LocalOutput {
             .name("swiftify-local-pcm".to_owned())
             .spawn(move || producer.produce(read, || None))
             .map_err(|err| format!("could not start audio worker: {err}"))?;
-        Ok(OutputSource { queue, worker: Some(worker) })
+        Ok(OutputSource {
+            queue,
+            worker: Some(worker),
+        })
     }
 
     pub(crate) fn install(&self, source: OutputSource) -> Option<OutputSource> {
@@ -206,7 +220,10 @@ impl LocalOutput {
             let frames = &output_samples[..sample_count].as_chunks::<2>().0;
             for (target, samples) in out.iter_mut().zip(frames.iter()) {
                 frame_index += 1;
-                *target = PcmFrame { stereo: *samples, media_end: frame_time(frame_index, rate) };
+                *target = PcmFrame {
+                    stereo: *samples,
+                    media_end: frame_time(frame_index, rate),
+                };
             }
             frames.len()
         })?;
@@ -240,12 +257,16 @@ impl LocalOutput {
     }
 
     pub(crate) fn set_volume(&self, volume: f32) {
-        self.shared.volume.store(volume.to_bits(), Ordering::Relaxed);
+        self.shared
+            .volume
+            .store(volume.to_bits(), Ordering::Relaxed);
     }
 
     pub(crate) fn empty(&self) -> bool {
         let slot = self.shared.slot();
-        slot.source.as_ref().is_none_or(|source| source.queue.position(slot.paused_at).drained)
+        slot.source
+            .as_ref()
+            .is_none_or(|source| source.queue.position(slot.paused_at).drained)
     }
 
     pub(crate) fn position(&self, queue: &Arc<RenderQueue>) -> Option<RenderPosition> {
@@ -256,8 +277,12 @@ impl LocalOutput {
 
     pub(crate) fn take_drained(&self, queue: &Arc<RenderQueue>) -> bool {
         let mut slot = self.shared.slot();
-        if self.is_lost() || slot.reported_end
-            || slot.source.as_ref().is_none_or(|source| !Arc::ptr_eq(queue, &source.queue))
+        if self.is_lost()
+            || slot.reported_end
+            || slot
+                .source
+                .as_ref()
+                .is_none_or(|source| !Arc::ptr_eq(queue, &source.queue))
             || !queue.position(slot.paused_at).drained
         {
             return false;
