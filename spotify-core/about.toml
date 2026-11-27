@@ -1,7 +1,7 @@
 # the licences of the crates built into spotify-core, which go out with every
 # copy of swiftify as packaging/licenses/rust-crates.LICENSE. when Cargo.lock
 # changes it is made again from this folder with
-#   cargo about generate --locked --no-default-features --features capi about.hbs -o ../packaging/licenses/rust-crates.LICENSE
+#   cargo about generate --locked --no-default-features --features capi,spotify about.hbs -o ../packaging/licenses/rust-crates.LICENSE
 
 # apache-2.0 first, as where a crate offers it its text needs no copyright
 # line, and many crates ship none

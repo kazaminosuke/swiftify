@@ -24,7 +24,7 @@
 # usage
 #   ./tools/build-windows-from-linux.sh
 #   ./tools/build-windows-from-linux.sh --install-deps
-#   ./tools/build-windows-from-linux.sh --qt /path/to/Qt/6.12.0/mingw_64 --out dist
+#   ./tools/build-windows-from-linux.sh --qt /path/to/Qt/6.12.1/mingw_64 --out dist
 #
 # needs mingw-w64-gcc, host qt6 (qt6-base, qt6-declarative, qt6-shadertools,
 # qt6-websockets), cmake, ninja, git, curl, python3, bsdtar, zip and rust
@@ -91,8 +91,7 @@ if [[ -z "$HOST_QT_VERSION" && -x "$HOST_QT/bin/qmake6" ]]; then
 fi
 [[ -n "$HOST_QT_VERSION" ]] || fail "could not detect host Qt6 version; install qt6-base"
 
-# rust target x86_64-pc-windows-gnu: use system rustup if present, or a local
-# rustup inside build-windows-cross when the system uses a plain distro rust package
+# Rust target for the MinGW executable.
 RUST_TARGET="x86_64-pc-windows-gnu"
 RUST_CMAKE_ARGS=("-DRust_CARGO_TARGET=$RUST_TARGET")
 has_rust_target() {
@@ -101,24 +100,8 @@ has_rust_target() {
     [[ -n "$sysroot" && -d "$sysroot" ]] && compgen -G "$sysroot/libstd*" >/dev/null
 }
 if ! has_rust_target rustc; then
-    if command -v rustup >/dev/null 2>&1; then
-        rustup target add "$RUST_TARGET"
-    else
-        export RUSTUP_HOME="$WORK/rustup"
-        export CARGO_HOME="$WORK/cargo"
-        export PATH="$CARGO_HOME/bin:$PATH"
-        if [[ ! -x "$CARGO_HOME/bin/rustup" ]]; then
-            echo "installing a local rust toolchain with $RUST_TARGET in $WORK/rustup..."
-            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y \
-                --no-modify-path --profile minimal --default-toolchain stable --target "$RUST_TARGET"
-        else
-            "$CARGO_HOME/bin/rustup" target add "$RUST_TARGET"
-        fi
-        RUST_CMAKE_ARGS+=(
-            "-DRust_COMPILER=$CARGO_HOME/bin/rustc"
-            "-DRust_CARGO=$CARGO_HOME/bin/cargo"
-        )
-    fi
+    command -v rustup >/dev/null || fail "install Rust's $RUST_TARGET target before cross-building"
+    rustup target add "$RUST_TARGET"
 fi
 
 # download the matching windows mingw_64 qt kit from download.qt.io if --qt was not given
@@ -134,7 +117,7 @@ if [[ -z "$QT" ]]; then
         for candidate in \
             "https://download.qt.io/online/qtsdkrepository/windows_x86/desktop/qt6_${QT_NODOT}/qt6_${QT_NODOT}_mingw" \
             "https://download.qt.io/online/qtsdkrepository/windows_x86/desktop/qt6_${QT_NODOT}"; do
-            if UPDATES_XML="$(curl -fsSL "$candidate/Updates.xml" 2>/dev/null)" && [[ -n "$UPDATES_XML" ]]; then
+            if UPDATES_XML="$(curl --proto "=https" --proto-redir "=https" -fsSL "$candidate/Updates.xml" 2>/dev/null)" && [[ -n "$UPDATES_XML" ]]; then
                 BASE_URL="$candidate"
                 break
             fi
@@ -151,11 +134,18 @@ if [[ -z "$QT" ]]; then
                 "qt.qt6.${QT_NODOT}.addons.qtshadertools.win64_mingw":qtshadertools-* | \
                 "qt.qt6.${QT_NODOT}.addons.qtwebsockets.win64_mingw":qtwebsockets-* | \
                 "qt.qt6.${QT_NODOT}.addons.qtnetworkauth.win64_mingw":qtnetworkauth-* | \
+                "qt.qt6.${QT_NODOT}.addons.qttasktree.win64_mingw":qttasktree-* | \
                 "qt.qt6.${QT_NODOT}.addons.qtimageformats.win64_mingw":qtimageformats-*)
+                    [[ "$ver" =~ ^[0-9.-]+$ && "$archive" =~ ^[A-Za-z0-9._-]+\.7z$ ]] \
+                        || fail "invalid Qt package metadata"
+                    archive_url="$BASE_URL/$pkg/${ver}${archive}"
+                    sha256="$(curl --proto '=https' --proto-redir '=https' -fsSL "$archive_url.sha256" | awk 'NR == 1 {print $1}')"
+                    [[ "$sha256" =~ ^[a-f0-9]{64}$ ]] || fail "missing Qt archive checksum for $archive"
                     dest="$WORK/qt/archives/${ver}${archive}"
-                    if [[ ! -f "$dest" ]]; then
-                        echo "  fetching $archive..."
-                        curl -fL --retry 3 -o "$dest.part" "$BASE_URL/$pkg/${ver}${archive}"
+                    if [[ ! -f "$dest" ]] || ! printf '%s  %s\n' "$sha256" "$dest" | sha256sum --check --status; then
+                        curl --proto '=https' --proto-redir '=https' -fL --retry 3 -o "$dest.part" "$archive_url"
+                        printf '%s  %s\n' "$sha256" "$dest.part" | sha256sum --check --status \
+                            || fail "Qt archive checksum mismatch for $archive"
                         mv "$dest.part" "$dest"
                     fi
                     bsdtar -xf "$dest" -C "$QT"
@@ -215,19 +205,24 @@ common=(
 
 # 3. cross-build qtkeychain and qcoro
 build_dependency() {
-    local name="$1" url="$2" tag="$3"
+    local name="$1" url="$2" revision="$3"
     shift 3
-    if [[ ! -d "$WORK/sources/$name" ]]; then
-        git clone --quiet --depth 1 --branch "$tag" "$url" "$WORK/sources/$name"
+    local checkout="$WORK/sources/$name-$revision"
+    if [[ ! -d "$checkout/.git" ]]; then
+        git init --quiet "$checkout"
+        git -C "$checkout" fetch --quiet --depth 1 "$url" "$revision"
+        git -C "$checkout" checkout --quiet --detach FETCH_HEAD
     fi
-    cmake -S "$WORK/sources/$name" -B "$WORK/$name" "${common[@]}" \
+    [[ "$(git -C "$checkout" rev-parse HEAD)" == "$revision" ]] || fail "$name source differs from its pinned commit"
+    [[ -z "$(git -C "$checkout" status --porcelain)" ]] || fail "$name source has local modifications"
+    cmake -S "$checkout" -B "$WORK/$name" "${common[@]}" \
         "-DCMAKE_INSTALL_PREFIX=$DEPS" -DCMAKE_INSTALL_BINDIR=bin -DCMAKE_INSTALL_LIBDIR=lib "$@"
     cmake --build "$WORK/$name" --parallel "$JOBS"
     cmake --install "$WORK/$name"
 }
-build_dependency qtkeychain https://github.com/frankosterfeld/qtkeychain.git 0.17.0 \
+build_dependency qtkeychain https://github.com/frankosterfeld/qtkeychain.git 875f77d9f61bd97fd84cca47ce3bc71186dfbd09 \
     -DBUILD_WITH_QT5=OFF -DBUILD_WITH_QT6=ON -DBUILD_TEST_APPLICATION=OFF -DBUILD_TRANSLATIONS=OFF
-build_dependency qcoro https://github.com/qcoro/qcoro.git v0.13.0 \
+build_dependency qcoro https://github.com/qcoro/qcoro.git 98f23d8d8d67e9e24217d268927faec97c713fb0 \
     -DUSE_QT_VERSION=6 -DQCORO_WITH_QTDBUS=OFF -DQCORO_WITH_QTWEBSOCKETS=OFF -DQCORO_WITH_QTQUICK=OFF \
     -DQCORO_WITH_QML=OFF -DQCORO_WITH_QTTEST=OFF -DQCORO_BUILD_EXAMPLES=OFF -DBUILD_TESTING=OFF
 
@@ -290,7 +285,7 @@ done
 
 [[ -f "$STAGE/share/licenses/swiftify/LICENSE" ]] || fail "the license is missing"
 for license in material-color-utilities.LICENSE rounded-polygon-qmljs.LICENSE material-symbols.LICENSE \
-    rust-crates.LICENSE qt.LICENSE qt.NOTICE qtkeychain.LICENSE qcoro.LICENSE YouTubeBrand.NOTICE; do
+    rust-crates.LICENSE build-provenance.txt qt.LICENSE qt.NOTICE qtkeychain.LICENSE qcoro.LICENSE YouTubeBrand.NOTICE; do
     [[ -f "$STAGE/share/licenses/swiftify/$license" ]] || fail "$license is missing"
 done
 

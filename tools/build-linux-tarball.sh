@@ -19,8 +19,8 @@
 # libraries bundled, against a qt kit from the qt installer or aqtinstall
 #
 # usage
-#   ./tools/build-linux-tarball.sh --qt ~/Qt/6.12.0/gcc_64
-#   ./tools/build-linux-tarball.sh --qt ~/Qt/6.12.0/gcc_64 --out dist --jobs 8
+#   ./tools/build-linux-tarball.sh --qt ~/Qt/6.12.1/gcc_64
+#   ./tools/build-linux-tarball.sh --qt ~/Qt/6.12.1/gcc_64 --out dist --jobs 8
 #
 # needs cmake, ninja, git, curl, a c++20 compiler (CC and CXX are used when
 # set), rust from rustup, and the dev packages for libpulse, alsa, openssl and
@@ -33,6 +33,7 @@ QT=""
 OUT="dist"
 JOBS="$(nproc 2>/dev/null || echo 4)"
 TEST_YOUTUBE=OFF
+SPOTIFY=ON
 
 while [[ $# -gt 0 ]]; do
     case $1 in
@@ -40,6 +41,7 @@ while [[ $# -gt 0 ]]; do
         --out) OUT="$2"; shift 2 ;;
         --jobs) JOBS="$2"; shift 2 ;;
         --test-youtube) TEST_YOUTUBE=ON; shift ;;
+        --without-spotify) SPOTIFY=OFF; shift ;;
         -h|--help)
             sed -n '2,12p' "$0" | sed 's/^# \{0,1\}//'
             exit 0
@@ -51,7 +53,7 @@ done
 fail() { echo "error, $1" >&2; exit 1; }
 
 [[ "$(uname -s)" == Linux && "$(uname -m)" == x86_64 ]] || fail "this builds linux x86_64 only"
-[[ -n "$QT" ]] || fail "pass --qt with the path of a qt 6.10 or newer gcc_64 kit"
+[[ -n "$QT" ]] || fail "pass --qt with the path of a qt 6.12.1 or newer gcc_64 kit"
 QT="$(cd "$QT" && pwd)"
 [[ -x "$QT/bin/qmake" ]] || fail "no qmake in $QT/bin, pass the gcc_64 folder of the kit"
 for tool in cmake ninja git curl cargo; do
@@ -62,9 +64,11 @@ SOURCE="$(cd "$(dirname "$0")/.." && pwd)"
 VERSION="$(sed -n '/^project(Swiftify/,/VERSION/s/^ *VERSION \([0-9.]*\).*/\1/p' "$SOURCE/CMakeLists.txt")"
 [[ -n "$VERSION" ]] || fail "could not read the version from CMakeLists.txt"
 NAME="swiftify-$VERSION-linux-x86_64"
+if [[ "$SPOTIFY" == OFF ]]; then NAME="$NAME-local"; fi
 mkdir -p "$OUT"
 OUT="$(cd "$OUT" && pwd)"
 WORK="$SOURCE/build-linux-tarball"
+if [[ "$SPOTIFY" == OFF ]]; then WORK="$WORK-local"; fi
 DEPS="$WORK/deps"
 APPDIR="$WORK/AppDir"
 mkdir -p "$WORK/sources" "$WORK/tools"
@@ -97,29 +101,36 @@ common=(-G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF "-DCMAKE_PREFIX_
 
 # qtkeychain and qcoro are built against the same qt, at tags known to work
 build_dependency() {
-    local name="$1" url="$2" tag="$3"
+    local name="$1" url="$2" revision="$3"
     shift 3
-    if [[ ! -d "$WORK/sources/$name" ]]; then
-        git clone --quiet --depth 1 --branch "$tag" "$url" "$WORK/sources/$name"
+    local checkout="$WORK/sources/$name-$revision"
+    if [[ ! -d "$checkout/.git" ]]; then
+        git init --quiet "$checkout"
+        git -C "$checkout" fetch --quiet --depth 1 "$url" "$revision"
+        git -C "$checkout" checkout --quiet --detach FETCH_HEAD
     fi
-    cmake -S "$WORK/sources/$name" -B "$WORK/$name" "${common[@]}" \
+    [[ "$(git -C "$checkout" rev-parse HEAD)" == "$revision" ]] || fail "$name source differs from its pinned commit"
+    [[ -z "$(git -C "$checkout" status --porcelain)" ]] || fail "$name source has local modifications"
+    cmake -S "$checkout" -B "$WORK/$name" "${common[@]}" \
         "-DCMAKE_INSTALL_PREFIX=$DEPS" -DCMAKE_INSTALL_LIBDIR=lib "$@"
     cmake --build "$WORK/$name" --parallel "$JOBS"
     cmake --install "$WORK/$name"
 }
-build_dependency qtkeychain https://github.com/frankosterfeld/qtkeychain.git 0.17.0 \
-    -DBUILD_WITH_QT5=OFF -DBUILD_WITH_QT6=ON -DBUILD_TEST_APPLICATION=OFF -DBUILD_TRANSLATIONS=OFF
-build_dependency qcoro https://github.com/qcoro/qcoro.git v0.13.0 \
+if [[ "$SPOTIFY" == ON ]]; then
+    build_dependency qtkeychain https://github.com/frankosterfeld/qtkeychain.git 875f77d9f61bd97fd84cca47ce3bc71186dfbd09 \
+        -DBUILD_WITH_QT5=OFF -DBUILD_WITH_QT6=ON -DBUILD_TEST_APPLICATION=OFF -DBUILD_TRANSLATIONS=OFF
+fi
+build_dependency qcoro https://github.com/qcoro/qcoro.git 98f23d8d8d67e9e24217d268927faec97c713fb0 \
     -DUSE_QT_VERSION=6 -DQCORO_WITH_QTDBUS=OFF -DQCORO_WITH_QTWEBSOCKETS=OFF -DQCORO_WITH_QTQUICK=OFF \
     -DQCORO_WITH_QML=OFF -DQCORO_WITH_QTTEST=OFF -DQCORO_BUILD_EXAMPLES=OFF -DBUILD_TESTING=OFF
 
 cmake -S "$SOURCE" -B "$WORK/swiftify" "${common[@]}" -DCMAKE_INSTALL_PREFIX=/usr \
-    -DSWIFTIFY_BUNDLED_QT=ON -DBUILD_TESTING="$TEST_YOUTUBE"
+    -DSWIFTIFY_BUNDLED_QT=ON -DENABLE_SPOTIFY="$SPOTIFY" -DBUILD_TESTING="$TEST_YOUTUBE"
 cmake --build "$WORK/swiftify" --target swiftify --parallel "$JOBS"
 if [[ "$TEST_YOUTUBE" == ON ]]; then
-    cmake --build "$WORK/swiftify" --target tst_youtubeapi tst_googleauthorization tst_youtubeview --parallel "$JOBS"
+    cmake --build "$WORK/swiftify" --target tst_youtubeapi tst_googleauthorization tst_youtubeview tst_local tst_playback tst_discord --parallel "$JOBS"
     ctest --test-dir "$WORK/swiftify" --output-on-failure --no-tests=error \
-        -R 'tst_(youtubeapi|googleauthorization|youtubeview)|translations_catalog|qml_statements|icon_names'
+        -R 'tst_(youtubeapi|googleauthorization|youtubeview|local|playback|discord)|translations_catalog|qml_statements|icon_names'
 fi
 rm -rf "${APPDIR:?}"
 DESTDIR="$APPDIR" cmake --install "$WORK/swiftify"
@@ -144,9 +155,11 @@ export LD_LIBRARY_PATH="$DEPS/lib:$QT/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 # the linuxdeploy plugin is found next to linuxdeploy, by its name.
 # qtkeychain is named outright, linuxdeploy's own pass does not look in
 # LD_LIBRARY_PATH and drops a library it cannot find without a word
+deploy_libraries=(--library "$QT/lib/libQt6NetworkAuth.so.6")
+if [[ "$SPOTIFY" == ON ]]; then deploy_libraries+=(--library "$DEPS/lib/libqt6keychain.so.1"); fi
 PATH="$WORK/tools:$PATH" "$WORK/tools/linuxdeploy-x86_64.AppImage" \
     --appdir "$APPDIR" --executable "$APPDIR/usr/bin/swiftify" \
-    --library "$DEPS/lib/libqt6keychain.so.1" --library "$QT/lib/libQt6NetworkAuth.so.6" \
+    "${deploy_libraries[@]}" \
     "${wayland[@]}" --plugin qt
 
 # the tarball is the usr tree: bin, lib, plugins, qml and share. the fonts are
@@ -156,9 +169,13 @@ PATH="$WORK/tools:$PATH" "$WORK/tools/linuxdeploy-x86_64.AppImage" \
 [[ -f "$APPDIR/usr/plugins/tls/libqopensslbackend.so" ]] || fail "the openssl tls plugin is missing"
 [[ -f "$APPDIR/usr/share/licenses/swiftify/LICENSE" ]] || fail "the license is missing"
 for license in material-color-utilities.LICENSE rounded-polygon-qmljs.LICENSE material-symbols.LICENSE \
-    rust-crates.LICENSE qt.LICENSE qt.NOTICE qtkeychain.LICENSE qcoro.LICENSE YouTubeBrand.NOTICE; do
+    rust-crates.LICENSE build-provenance.txt qt.LICENSE qt.NOTICE qcoro.LICENSE YouTubeBrand.NOTICE; do
     [[ -f "$APPDIR/usr/share/licenses/swiftify/$license" ]] || fail "$license is missing"
 done
+
+if [[ "$SPOTIFY" == ON && ! -f "$APPDIR/usr/share/licenses/swiftify/qtkeychain.LICENSE" ]]; then
+    fail "qtkeychain.LICENSE is missing"
+fi
 
 # what the desktop itself is built on comes from the machine, never the
 # build's ubuntu. an old libsystemd or glib in lib/ is found first by the
@@ -190,4 +207,5 @@ while IFS= read -r -d '' file; do
 done < <(find "$WORK/$NAME" -type f \( -path '*/bin/*' -o -name '*.so*' \) -print0)
 [[ -z "$missing" ]] || fail "libraries missing from the tarball"$'\n'"$missing"
 tar -C "$WORK" -czf "$OUT/$NAME.tar.gz" "$NAME"
+sha256sum "$OUT/$NAME.tar.gz" | sed "s|  $OUT/|  |" > "$OUT/$NAME.tar.gz.sha256"
 echo "built $OUT/$NAME.tar.gz"

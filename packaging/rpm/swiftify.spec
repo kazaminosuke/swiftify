@@ -17,7 +17,7 @@ BuildRequires:  git-core
 BuildRequires:  cargo
 BuildRequires:  rust >= 1.85
 BuildRequires:  desktop-file-utils
-BuildRequires:  cmake(Qt6Core) >= 6.10
+BuildRequires:  cmake(Qt6Core) >= 6.12.1
 BuildRequires:  cmake(Qt6Gui)
 BuildRequires:  cmake(Qt6Network)
 BuildRequires:  cmake(Qt6Concurrent)
