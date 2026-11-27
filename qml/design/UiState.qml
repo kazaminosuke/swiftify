@@ -175,7 +175,7 @@ QtObject {
     /// does playback dropping later on
     property bool setupUnderway: false
     /// the setup shows rather than the library
-    readonly property bool needsSetup: !Session.libraryConnected || (setupUnderway && !Session.connected)
+    readonly property bool needsSetup: Session.enabled && (!Session.libraryConnected || (setupUnderway && !Session.connected))
 
     function followSetup() {
         if (!Session.evaluatingStoredLogin && !Session.libraryConnected) {

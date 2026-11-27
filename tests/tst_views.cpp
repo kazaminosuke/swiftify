@@ -2641,6 +2641,7 @@ private slots:
         QVERIFY(shown->property("truncated").toBool());
     }
 
+#ifdef SWIFTIFY_HAS_SPOTIFY
     /// connecting for the first time: the setup stays through the library's
     /// login until playback's is done too, and only then gives way
     void theSetupWaitsForPlaybackToo()
@@ -2708,6 +2709,8 @@ private slots:
         QVERIFY2(!QString::fromLatin1(current->metaObject()->className()).startsWith(QLatin1StringView("SetupView")),
                  current->metaObject()->className());
     }
+
+#endif
 
     /// a menu is built the first time it opens, and opens then
     void aMenuOpensTheFirstTimeItIsAsked()

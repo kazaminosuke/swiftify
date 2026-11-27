@@ -335,6 +335,33 @@ private:
     }
 
 private slots:
+    void disabledSessionLeavesSavedCredentialsUntouched()
+    {
+        FakeCore core;
+        MemoryCredentialStore credentials;
+        QNetworkAccessManager network;
+        ErrorCenter errors(nullptr);
+        int replies = 0;
+        connect(&network, &QNetworkAccessManager::finished, this, [&](QNetworkReply *) { ++replies; });
+        credentials.items.insert(CredentialStore::Account::Playback,
+            {QStringLiteral("example-client"), QStringLiteral("example-refresh")});
+        credentials.items.insert(CredentialStore::Account::Library,
+            {QStringLiteral("example-client"), QStringLiteral("example-refresh")});
+
+        SpotifySession session(&core, &credentials, &network, &errors, nullptr, false);
+        session.restoreSavedSessions();
+        session.beginPlaybackLogin();
+        session.beginLibraryLogin();
+        session.logOut();
+        QVERIFY(!session.isEvaluatingStoredLogin());
+        QVERIFY(!session.isLoginInProgress());
+        QVERIFY(!session.isConnected());
+        QVERIFY(!session.hasLibraryToken());
+        QVERIFY(core.pending.isEmpty());
+        QCOMPARE(replies, 0);
+        QCOMPARE(credentials.items.size(), 2);
+    }
+
     void savedLoginsKeepWhatTheyHold()
     {
         const StoredCredentials credentials {QStringLiteral("client"), QStringLiteral("refresh"), 2,

@@ -60,19 +60,19 @@ StyledMenu {
     StyledMenuItem {
         text: qsTr("Increase Volume")
         symbol: "volume_up"
-        enabled: Session.connected
+        enabled: true
         onTriggered: Player.adjustVolume(0.05)
     }
     StyledMenuItem {
         text: qsTr("Decrease Volume")
         symbol: "volume_down"
-        enabled: Session.connected
+        enabled: true
         onTriggered: Player.adjustVolume(-0.05)
     }
     StyledMenuItem {
         text: Player.volume <= 0.01 ? qsTr("Unmute") : qsTr("Mute")
         symbol: Player.volume <= 0.01 ? "volume_up" : "volume_off"
-        enabled: Session.connected
+        enabled: true
         onTriggered: Player.toggleMute()
     }
     StyledMenuSeparator {}

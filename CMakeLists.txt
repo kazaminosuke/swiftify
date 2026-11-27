@@ -57,9 +57,13 @@ endif()
 # the wayland, d-bus and pipewire pieces. off elsewhere so the portable parts
 # can be built and tested on a development machine without them.
 option(SWIFTIFY_DESKTOP_INTEGRATION "Build the Linux desktop integration" ${SWIFTIFY_IS_LINUX})
+option(ENABLE_SPOTIFY "Build the Spotify service integration" ON)
 # spotify soloist plays spotify's songs for accounts spotify no longer gives
 # librespot the keys for.
 option(SWIFTIFY_SOLOIST "Play Spotify songs through Spotify Soloist when it is installed" ON)
+if(NOT ENABLE_SPOTIFY)
+    set(SWIFTIFY_SOLOIST OFF)
+endif()
 
 find_package(Qt6 6.10 REQUIRED COMPONENTS
     Core Gui Network Concurrent Qml Quick QuickControls2 ShaderTools)
@@ -87,7 +91,9 @@ option(SWIFTIFY_YOUTUBE_CLIENT "Build the YouTube client" ${SWIFTIFY_YOUTUBE_DEF
 if(SWIFTIFY_YOUTUBE_CLIENT)
     find_package(Qt6 6.10 REQUIRED COMPONENTS NetworkAuth)
 endif()
-find_package(Qt6Keychain REQUIRED)
+if(ENABLE_SPOTIFY)
+    find_package(Qt6Keychain REQUIRED)
+endif()
 if(WIN32)
     find_package(Qt6 6.10 REQUIRED COMPONENTS Widgets)
 endif()
@@ -116,11 +122,16 @@ FetchContent_Declare(Corrosion
     GIT_TAG v0.6.1)
 FetchContent_MakeAvailable(Corrosion)
 
+set(SWIFTIFY_CORE_FEATURES capi)
+if(ENABLE_SPOTIFY)
+    list(APPEND SWIFTIFY_CORE_FEATURES spotify)
+endif()
 corrosion_import_crate(
     MANIFEST_PATH ${SWIFTIFY_CORE_DIR}/Cargo.toml
     CRATE_TYPES staticlib
     NO_DEFAULT_FEATURES
-    FEATURES capi)
+    LOCKED
+    FEATURES ${SWIFTIFY_CORE_FEATURES})
 target_include_directories(spotify_core INTERFACE
     ${SWIFTIFY_CORE_DIR}/include)
 # what rustc reports as the staticlib's native dependencies
@@ -138,10 +149,13 @@ elseif(WIN32)
         propsys crypt32 secur32 ncrypt runtimeobject synchronization)
 else()
     find_package(ALSA REQUIRED)
-    find_package(OpenSSL REQUIRED)
     find_package(Threads REQUIRED)
     target_link_libraries(spotify_core INTERFACE
-        ALSA::ALSA OpenSSL::SSL OpenSSL::Crypto Threads::Threads ${CMAKE_DL_LIBS} m)
+        ALSA::ALSA Threads::Threads ${CMAKE_DL_LIBS} m)
+    if(ENABLE_SPOTIFY)
+        find_package(OpenSSL REQUIRED)
+        target_link_libraries(spotify_core INTERFACE OpenSSL::SSL OpenSSL::Crypto)
+    endif()
 endif()
 
 # --- material-color-utilities ------------------------------------------------
@@ -256,6 +270,9 @@ endif()
 if(NOT TARGET Qt6::DBus)
     list(FILTER SWIFTIFY_SOURCES EXCLUDE REGEX "^src/system/dbus/")
 endif()
+if(NOT ENABLE_SPOTIFY)
+    list(FILTER SWIFTIFY_SOURCES EXCLUDE REGEX "^src/spotify/OAuthFlow\.")
+endif()
 if(NOT SWIFTIFY_SOLOIST)
     list(FILTER SWIFTIFY_SOURCES EXCLUDE REGEX "^src/soloist/")
 else()
@@ -355,6 +372,7 @@ target_include_directories(swiftify_app PRIVATE tools/shape_atlas)
 # sleep and device monitors
 target_compile_definitions(swiftify_app PUBLIC
     SWIFTIFY_VERSION="${PROJECT_VERSION}"
+    $<$<BOOL:${ENABLE_SPOTIFY}>:SWIFTIFY_HAS_SPOTIFY>
     $<$<BOOL:${SWIFTIFY_DESKTOP_INTEGRATION}>:SWIFTIFY_DESKTOP_INTEGRATION>
     $<$<TARGET_EXISTS:Qt6::DBus>:SWIFTIFY_HAS_DBUS>)
 target_compile_definitions(swiftify_app PRIVATE
@@ -382,9 +400,11 @@ endif()
 target_link_libraries(swiftify_app PUBLIC
     Qt6::Core Qt6::Gui Qt6::Network Qt6::Concurrent Qt6::Qml Qt6::Quick Qt6::QuickControls2
     QCoro6::Core QCoro6::Network
-    qt6keychain
     material_color_utilities
     spotify_core)
+if(ENABLE_SPOTIFY)
+    target_link_libraries(swiftify_app PUBLIC qt6keychain)
+endif()
 
 if(WIN32)
     target_link_libraries(swiftify_app PUBLIC Qt6::Widgets comctl32 dwmapi ole32 shell32 uuid runtimeobject mmdevapi)

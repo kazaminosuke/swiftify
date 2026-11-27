@@ -277,6 +277,7 @@ private:
     void preloadNextTrack();
     void syncMediaSession();
     void reset();
+    QString playbackStateKey() const;
     void restorePlaybackState();
     void restoreLyricsDelay();
     void savePlaybackState();

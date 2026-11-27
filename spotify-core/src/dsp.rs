@@ -27,11 +27,11 @@ use std::{
     },
 };
 
-use librespot::playback::NUM_CHANNELS;
+use crate::spectrum::NUM_CHANNELS;
 #[cfg(test)]
-use librespot::playback::SAMPLE_RATE;
+use crate::spectrum::SAMPLE_RATE;
 
-const CHANNELS: usize = NUM_CHANNELS as usize;
+const CHANNELS: usize = NUM_CHANNELS;
 
 pub(crate) const EQ_BAND_COUNT: usize = 6;
 /// the same centres spotify's own equalizer uses, so a curve copied from there

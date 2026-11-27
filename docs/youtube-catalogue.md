@@ -3,8 +3,8 @@
 On a build with `SWIFTIFY_YOUTUBE_CLIENT=ON`, launch `swiftify --youtube`.
 The window uses Qt Quick and Swiftify's Material components. A second launch
 raises the existing catalogue window. The playback window uses its own
-instance. Launch it with `--spotify` or use an existing playback shortcut such
-as `--play-pause`.
+instance. Launch it with `swiftify` or use a playback shortcut such as
+`--play-pause`. To enable the optional Spotify integration, pass `--enable-spotify`.
 
 For guest search,
 set `SWIFTIFY_YOUTUBE_API_KEY` in the process environment using your own
@@ -21,8 +21,8 @@ record type. Channels can include artists. YouTube Music artist and album
 entities, history, recommendations and library mutation still need a service
 adapter with suitable capabilities.
 
-The desktop OAuth flow uses PKCE, loopback redirect, automatic refresh in a
-running session, local sign-out and a server revocation request. The application
+The desktop OAuth flow uses PKCE, loopback redirect, optional on-demand refresh,
+local sign-out and a server revocation request. The application
 holds the tokens in memory. It does not yet persist a refresh token in the OS
 keychain. API credentials are sent in request headers. OAuth diagnostics avoid
 including secret-bearing request details. The mock tests cover redirects,
