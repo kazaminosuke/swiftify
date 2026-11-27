@@ -25,6 +25,7 @@
 #include <QCoroTask>
 #include <QHash>
 #include <QJsonValue>
+#include <QObject>
 #include <QString>
 #include <QUrlQuery>
 
@@ -64,7 +65,7 @@ private:
 
 /// stats.fm's public api, read with nothing but the username: a public
 /// profile's stats are open to anyone, as on the website
-class StatsFmClient {
+class StatsFmClient : public QObject {
 public:
     explicit StatsFmClient(QNetworkAccessManager *network);
 

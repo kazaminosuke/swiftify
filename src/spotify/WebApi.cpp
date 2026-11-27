@@ -53,6 +53,11 @@ WebApi::WebApi(QNetworkAccessManager *network)
 {
 }
 
+WebApi::~WebApi()
+{
+    cancelRequests();
+}
+
 QUrl WebApi::apiUrl(const QString &path, const QUrlQuery &query)
 {
     QUrl url;
@@ -111,12 +116,20 @@ QCoro::Task<QByteArray> WebApi::requestData(QUrl url, QByteArray method, QString
     }
 
     const auto generation = m_generation;
-    auto *reply = boundReply(m_network->sendCustomRequest(request, method, body), maxApiBytes, totalMs);
-    m_replies.insert(reply);
-    if (cancel) cancel->watch(reply);
-    const auto retire = qScopeGuard([&] { m_replies.remove(reply); reply->deleteLater(); });
-    co_await qCoro(reply).waitForFinished();
-    if (generation != m_generation) throw Cancelled();
+    auto *pending = boundReply(m_network->sendCustomRequest(request, method, body), maxApiBytes, totalMs);
+    // QCoro can resume after the reply's manager and the API owner are gone.
+    const QPointer<QNetworkReply> reply(pending);
+    const QPointer<WebApi> owner(this);
+    m_replies.insert(pending);
+    connect(pending, &QObject::destroyed, this, [this, pending] { m_replies.remove(pending); });
+    if (cancel) cancel->watch(pending);
+    const auto retire = qScopeGuard([owner, reply] {
+        if (!reply) return;
+        if (owner) owner->m_replies.remove(reply.data());
+        reply->deleteLater();
+    });
+    co_await qCoro(pending).waitForFinished();
+    if (!owner || !reply || generation != m_generation) throw Cancelled();
     throwIfCancelled(cancel);
 
     const int status = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
@@ -190,6 +203,7 @@ QCoro::Task<> WebApi::collectPages(QUrl firstUrl, QString accessToken,
 
 QCoro::Task<QJsonObject> WebApi::requestPage(QUrl url, QString accessToken, CancelToken cancel, QDeadlineTimer deadline)
 {
+    const QPointer<WebApi> owner(this);
     const auto generation = m_generation;
     if (deadline.hasExpired()) throw SpotifyError::requestFailed(QStringLiteral("Spotify pagination timed out."));
     const auto requestLimit = [deadline] { return int(qBound(qint64(1), deadline.remainingTime(), qint64(30'000))); };
@@ -208,7 +222,7 @@ QCoro::Task<QJsonObject> WebApi::requestPage(QUrl url, QString accessToken, Canc
         throw SpotifyError::requestFailed(QStringLiteral("Spotify pagination timed out."));
     }
     co_await QCoro::sleepFor(std::chrono::seconds(retryAfter));
-    if (generation != m_generation) throw Cancelled();
+    if (!owner || generation != m_generation) throw Cancelled();
     throwIfCancelled(cancel);
     co_return (co_await requestJson(url, "GET", accessToken, {}, {}, cancel, requestLimit())).object();
 }
@@ -381,9 +395,9 @@ QCoro::Task<SearchResults> WebApi::search(QString query, QString accessToken, Ca
     co_return results;
 }
 
-QCoro::Task<Song> WebApi::song(QString trackId, QString accessToken)
+QCoro::Task<Song> WebApi::song(QString trackId, QString accessToken, CancelToken cancel)
 {
-    const QJsonDocument document = co_await requestJson(apiUrl(QStringLiteral("/v1/tracks/%1").arg(trackId), QUrlQuery {kMarket}), "GET", accessToken);
+    const QJsonDocument document = co_await requestJson(apiUrl(QStringLiteral("/v1/tracks/%1").arg(trackId), QUrlQuery {kMarket}), "GET", accessToken, {}, {}, cancel);
     const auto song = json::track(document.object());
     if (!song) {
         throw SpotifyError::invalidData(QStringLiteral("Spotify returned an unsupported track."));
