@@ -54,7 +54,7 @@ ApplicationWindow {
 
             TextButton {
                 visible: window.music.oauthConfigured
-                enabled: !window.music.accountBusy || window.music.signingIn
+                enabled: !window.music.accountBusy || window.music.signingIn || window.music.signedIn
                 variant: TextButton.Tonal
                 symbol: window.music.signedIn ? "logout" : "account_circle"
                 text: window.music.signingIn ? qsTr("Cancel sign-in")
