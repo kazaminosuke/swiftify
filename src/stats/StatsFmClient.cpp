@@ -31,7 +31,6 @@
 #include <QCoroNetworkReply>
 
 #include <algorithm>
-#include <memory>
 #include <vector>
 
 namespace swiftify {
@@ -126,7 +125,8 @@ QCoro::Task<QJsonValue> StatsFmClient::get(QString path, QUrlQuery query, Cancel
         throw StatsFmError(StatsFmError::Kind::Network, QStringLiteral("Too many stats.fm requests are in progress."));
     }
     ++m_activeRequests;
-    const auto release = qScopeGuard([this] { --m_activeRequests; });
+    const QPointer<StatsFmClient> owner(this);
+    const auto release = qScopeGuard([owner] { if (owner) --owner->m_activeRequests; });
     QUrl url(kApiBase + path);
     url.setQuery(query);
     QNetworkRequest request(url);
@@ -135,11 +135,11 @@ QCoro::Task<QJsonValue> StatsFmClient::get(QString path, QUrlQuery query, Cancel
     request.setTransferTimeout(15'000);
 
     constexpr qint64 maxStatsBytes = 2 * 1024 * 1024;
-    const auto dispose = [](QNetworkReply *reply) { reply->deleteLater(); };
-    const std::unique_ptr<QNetworkReply, decltype(dispose)> reply(
-        boundReply(m_network->get(request), maxStatsBytes, 20'000), dispose);
-    if (cancel) cancel->watch(reply.get());
-    co_await qCoro(reply.get()).waitForFinished();
+    const QPointer<QNetworkReply> reply(boundReply(m_network->get(request), maxStatsBytes, 20'000));
+    const auto dispose = qScopeGuard([reply] { if (reply) reply->deleteLater(); });
+    if (cancel) cancel->watch(reply.data());
+    co_await qCoro(reply.data()).waitForFinished();
+    if (!owner || !reply) throw Cancelled();
     throwIfCancelled(cancel);
 
     const int status = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
@@ -185,8 +185,10 @@ QCoro::Task<StatsFmProfile> StatsFmClient::profile(QString username, CancelToken
 
 QCoro::Task<StatsSnapshot> StatsFmClient::snapshot(QString username, StatsPeriod period, bool isPlus, CancelToken cancel)
 {
-    const auto fetch = [this, &cancel](QString path, QUrlQuery query) {
-        return get(std::move(path), std::move(query), cancel);
+    const QPointer<StatsFmClient> owner(this);
+    const auto fetch = [owner, &cancel](QString path, QUrlQuery query) {
+        if (!owner) throw Cancelled();
+        return owner->get(std::move(path), std::move(query), cancel);
     };
     const QString user = QStringLiteral("/users/%1").arg(username);
     const QUrlQuery range {{QStringLiteral("range"), rangeName(period)}};
@@ -252,8 +254,11 @@ QCoro::Task<StatsSnapshot> StatsFmClient::snapshot(QString username, StatsPeriod
     // without plus the top lists come without counts: each place's own
     // stats have them, asked for a few at a time
     const QString rangeText = rangeName(period);
+    if (!owner) throw Cancelled();
     co_await fillCounts(user, QStringLiteral("tracks"), &snapshot.topTracks, rangeText, cancel);
+    if (!owner) throw Cancelled();
     co_await fillCounts(user, QStringLiteral("artists"), &snapshot.topArtists, rangeText, cancel);
+    if (!owner) throw Cancelled();
     co_await fillCounts(user, QStringLiteral("albums"), &snapshot.topAlbums, rangeText, cancel);
     if (!isPlus) {
         std::stable_sort(snapshot.topAlbums.begin(), snapshot.topAlbums.end(),
