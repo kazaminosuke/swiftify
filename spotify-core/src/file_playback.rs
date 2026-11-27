@@ -29,7 +29,6 @@ use std::{
     time::Duration,
 };
 
-use librespot::playback::SAMPLE_RATE;
 use rodio::source::UniformSourceIterator;
 use swiftify_native_audio::{
     decode::FileSource,
@@ -37,7 +36,7 @@ use swiftify_native_audio::{
 };
 
 use crate::dsp::{DspProcessor, SharedDsp};
-use crate::spectrum::{AnalysisWindow, RateConverter, SharedSpectrum};
+use crate::spectrum::{AnalysisWindow, RateConverter, SAMPLE_RATE, SharedSpectrum};
 
 #[derive(Clone)]
 pub(crate) struct LocalPlayback {

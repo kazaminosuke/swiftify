@@ -10,8 +10,8 @@ swiftify-native-audio = { path = "../native-audio", default-features = false, fe
 env_logger = "=0.11.11"
 hound = "3.5.1"
 # a playlist read through the session (playlist.rs), as librespot reads it
-http = "=1.5.0"
-librespot = "=0.8.0"
+http = { version = "=1.5.0", optional = true }
+librespot = { version = "=0.8.0", optional = true }
 rustfft = "=6.4.1"
 # local music: mp3, flac, ogg vorbis, wav and aiff, and aac or apple lossless
 # in an mp4 (m4a) container, all through symphonia, librespot's own decoder
@@ -20,7 +20,7 @@ rustfft = "=6.4.1"
 rodio = { version = "=0.21.1", default-features = false, features = ["playback", "flac", "wav", "mp3", "vorbis", "mp4", "symphonia-alac", "symphonia-aiff"] }
 # writes a local file's tags and cover art, which symphonia only reads
 lofty = "=0.25.4"
-protobuf = "=3.7.2"
+protobuf = { version = "=3.7.2", optional = true }
 serde = { version = "1", features = ["derive"] }
 # reads a local file's tags and cover art (local.rs)
 symphonia = { version = "=0.5.5", default-features = false, features = ["mp3", "flac", "ogg", "vorbis", "wav", "pcm", "aiff", "isomp4", "aac", "alac"] }
@@ -34,7 +34,8 @@ swift-bridge-build = { version = "=0.1.59", optional = true }
 [features]
 default = ["swift"]
 # the swift-bridge interface the macos and ios apps link against.
-swift = ["dep:swift-bridge", "dep:swift-bridge-build"]
+swift = ["spotify", "dep:swift-bridge", "dep:swift-bridge-build"]
+spotify = ["dep:librespot", "dep:http", "dep:protobuf"]
 # a plain c abi for the linux qt front end (include/swiftify_core.h).
 capi = []
 

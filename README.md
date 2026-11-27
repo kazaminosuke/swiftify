@@ -24,14 +24,21 @@ a spotify player for desktop, built with Qt Quick on top of a Rust core that wra
 
 ## YouTube catalogue in this fork
 
-The Windows and Linux builds with the YouTube client enabled open a Qt Quick
-catalogue for videos, channels and playlists. Guest search uses a configured
-API key. Read-only Google sign-in adds liked music and owned playlists.
-See the [catalogue setup](docs/youtube-catalogue.md) for credentials and
-coverage.
+The desktop app starts in the local-file workspace. To use Spotify in a
+build that includes it, launch `swiftify --enable-spotify` (or
+`swiftify --spotify`). Set `SWIFTIFY_ENABLE_SPOTIFY=1` to opt in from a desktop
+launcher, and pass `--disable-spotify` to override it at startup. Saved Spotify
+credentials are opened only in an opted-in process. Quit the running playback
+window before changing modes.
 
-Use `swiftify --spotify` for the Spotify and local-file workspace below.
-Builds with `-DSWIFTIFY_YOUTUBE_CLIENT=OFF` start that workspace directly.
+For a local build without Spotify, configure CMake with
+`-DENABLE_SPOTIFY=OFF`. The default `ON` builds the upstream-compatible service
+integration. The local build keeps music playback, EQ, ReplayGain, playlists
+and synchronized lyrics, and excludes librespot, Spotify authentication,
+Spotify Soloist and their dedicated Qt dependencies.
+
+When enabled at build time, the native YouTube catalogue opens with
+`swiftify --youtube`. See the [catalogue setup](docs/youtube-catalogue.md).
 
 ## about
 

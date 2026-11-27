@@ -54,6 +54,7 @@ Item {
 
             NavigationItem {
                 width: parent.width
+                visible: Session.enabled
                 text: qsTr("Home")
                 iconShape: "cookie9"
                 symbol: "home"
@@ -62,6 +63,7 @@ Item {
             }
             NavigationItem {
                 width: parent.width
+                visible: Session.enabled
                 text: qsTr("Search")
                 iconShape: "clover4"
                 symbol: "search"
@@ -75,6 +77,7 @@ Item {
             }
             NavigationItem {
                 width: parent.width
+                visible: Session.enabled
                 text: qsTr("Songs")
                 iconShape: "heart"
                 keepsShape: true

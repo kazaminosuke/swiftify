@@ -88,6 +88,7 @@ Platform.MenuBar {
             shortcut: "Ctrl+1"
             checkable: true
             checked: Library.page === Library.Page.Home
+            visible: Session.enabled
             onTriggered: Library.showHome()
         }
         Platform.MenuItem {
@@ -95,6 +96,7 @@ Platform.MenuBar {
             shortcut: "Ctrl+2"
             checkable: true
             checked: Library.page === Library.Page.Search
+            visible: Session.enabled
             onTriggered: Library.showSearch()
         }
         Platform.MenuItem {
@@ -102,6 +104,7 @@ Platform.MenuBar {
             shortcut: "Ctrl+3"
             checkable: true
             checked: Library.page === Library.Page.Songs
+            visible: Session.enabled
             onTriggered: Library.showSavedSongs()
         }
         Platform.MenuItem {
@@ -109,6 +112,7 @@ Platform.MenuBar {
             shortcut: "Ctrl+4"
             checkable: true
             checked: Library.page === Library.Page.Playlists
+            visible: Session.enabled
             onTriggered: Library.showPlaylists()
         }
         Platform.MenuItem {
@@ -199,19 +203,19 @@ Platform.MenuBar {
         Platform.MenuItem {
             text: qsTr("Volume Up")
             shortcut: "Ctrl+Up"
-            enabled: Session.connected
+            enabled: true
             onTriggered: Player.adjustVolume(0.05)
         }
         Platform.MenuItem {
             text: qsTr("Volume Down")
             shortcut: "Ctrl+Down"
-            enabled: Session.connected
+            enabled: true
             onTriggered: Player.adjustVolume(-0.05)
         }
         Platform.MenuItem {
             text: Player.volume <= 0.01 ? qsTr("Unmute") : qsTr("Mute")
             shortcut: "Ctrl+Alt+M"
-            enabled: Session.connected
+            enabled: true
             onTriggered: Player.toggleMute()
         }
         Platform.MenuSeparator {}

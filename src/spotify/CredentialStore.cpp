@@ -23,11 +23,14 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QTimeZone>
+#ifdef SWIFTIFY_HAS_SPOTIFY
 #include <qt6keychain/keychain.h>
+#endif
 #include <QCoroSignal>
 
 namespace swiftify {
 
+#ifdef SWIFTIFY_HAS_SPOTIFY
 namespace {
 
 SpotifyError storeError(const QString &operation, const QString &detail)
@@ -126,6 +129,8 @@ QCoro::Task<> KeychainCredentialStore::removeAll()
         }
     }
 }
+
+#endif
 
 QCoro::Task<std::optional<StoredCredentials>> MemoryCredentialStore::load(Account account)
 {

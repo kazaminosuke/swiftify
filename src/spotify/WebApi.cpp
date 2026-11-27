@@ -65,6 +65,7 @@ QUrl WebApi::apiUrl(const QString &path, const QUrlQuery &query)
 QCoro::Task<QByteArray> WebApi::requestData(QUrl url, QByteArray method, QString accessToken,
                                             QByteArray body, QByteArray contentType)
 {
+#ifdef SWIFTIFY_HAS_SPOTIFY
     if (url.scheme() != QLatin1StringView("https") || url.host() != QLatin1StringView("api.spotify.com")) {
         throw SpotifyError(SpotifyError::Kind::InvalidUrl, QStringLiteral("Spotify returned an invalid API URL."));
     }
@@ -113,6 +114,14 @@ QCoro::Task<QByteArray> WebApi::requestData(QUrl url, QByteArray method, QString
     default:
         throw SpotifyError::requestFailed(message);
     }
+#else
+    Q_UNUSED(url);
+    Q_UNUSED(method);
+    Q_UNUSED(accessToken);
+    Q_UNUSED(body);
+    Q_UNUSED(contentType);
+    throw SpotifyError(SpotifyError::Kind::Session, QStringLiteral("Spotify support is disabled."));
+#endif
 }
 
 QCoro::Task<QJsonDocument> WebApi::requestJson(QUrl url, QByteArray method, QString accessToken,
