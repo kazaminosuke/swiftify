@@ -676,7 +676,7 @@ QCoro::Task<> LibraryStore::runPlaylistLoad(Playlist playlist, CancelToken token
         QList<Song> loaded;
         if (playlist.canModify(m_profile.id)) {
             loaded = co_await m_session->withLibraryAccessToken<QList<Song>>(
-                [this, id = playlist.id](QString accessToken) { return m_session->webApi().playlistSongs(id, accessToken); });
+                [this, id = playlist.id, token](QString accessToken) { return m_session->webApi().playlistSongs(id, accessToken, token); });
         } else {
             // the web api only gives the name and cover of a playlist someone
             // else made, the session still reads its songs
@@ -721,7 +721,7 @@ QCoro::Task<> LibraryStore::runAlbumLoad(Album album, CancelToken token)
     const Destination target {Page::Album, {}, album};
     try {
         const QList<Song> loaded = co_await m_session->withLibraryAccessToken<QList<Song>>(
-            [this, album](QString accessToken) { return m_session->webApi().albumSongs(album, accessToken); });
+            [this, album, token](QString accessToken) { return m_session->webApi().albumSongs(album, accessToken, token); });
         throwIfCancelled(token);
         if (!(m_destination == target)) {
             co_return;
@@ -785,7 +785,7 @@ QCoro::Task<> LibraryStore::runArtistLoad(Artist artist, CancelToken token)
         }
 
         const QList<Album> albums = co_await m_session->withLibraryAccessToken<QList<Album>>(
-            [this, artist](QString accessToken) { return m_session->webApi().artistAlbums(artist, accessToken); });
+            [this, artist, token](QString accessToken) { return m_session->webApi().artistAlbums(artist, accessToken, token); });
         throwIfCancelled(token);
         if (!(m_destination == target)) {
             co_return;
@@ -864,7 +864,7 @@ QCoro::Task<> LibraryStore::runLinkNavigation(SpotifyLink link, CancelToken toke
         }
         case SpotifyLink::Kind::Album: {
             const Album album = co_await m_session->withLibraryAccessToken<Album>(
-                [this, id = link.id](QString accessToken) { return m_session->webApi().album(id, accessToken); });
+                [this, id = link.id, token](QString accessToken) { return m_session->webApi().album(id, accessToken, token); });
             throwIfCancelled(token);
             setLoading(m_searching, false);
             selectAlbum(album);
@@ -872,7 +872,7 @@ QCoro::Task<> LibraryStore::runLinkNavigation(SpotifyLink link, CancelToken toke
         }
         case SpotifyLink::Kind::Playlist: {
             const Playlist playlist = co_await m_session->withLibraryAccessToken<Playlist>(
-                [this, id = link.id](QString accessToken) { return m_session->webApi().playlist(id, accessToken); });
+                [this, id = link.id, token](QString accessToken) { return m_session->webApi().playlist(id, accessToken, token); });
             throwIfCancelled(token);
             setLoading(m_searching, false);
             selectPlaylist(playlist);
@@ -880,7 +880,7 @@ QCoro::Task<> LibraryStore::runLinkNavigation(SpotifyLink link, CancelToken toke
         }
         case SpotifyLink::Kind::Artist: {
             const Artist artist = co_await m_session->withLibraryAccessToken<Artist>(
-                [this, id = link.id](QString accessToken) { return m_session->webApi().artist(id, accessToken); });
+                [this, id = link.id, token](QString accessToken) { return m_session->webApi().artist(id, accessToken, token); });
             throwIfCancelled(token);
             setLoading(m_searching, false);
             selectArtist(artist);
@@ -949,7 +949,7 @@ QCoro::Task<> LibraryStore::runSearch(QString query, CancelToken token)
         co_await QCoro::sleepFor(std::chrono::milliseconds(350));
         throwIfCancelled(token);
         const SearchResults results = co_await m_session->withLibraryAccessToken<SearchResults>(
-            [this, query](QString accessToken) { return m_session->webApi().search(query, accessToken); });
+            [this, query, token](QString accessToken) { return m_session->webApi().search(query, accessToken, token); });
         throwIfCancelled(token);
         if (m_searchQuery.trimmed() != query) {
             co_return;

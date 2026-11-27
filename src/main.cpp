@@ -292,9 +292,22 @@ int main(int argc, char *argv[])
     fonts::loadIconFont();
     fonts::loadInterfaceFont();
 
-    SingleInstance instance(catalogueMode ? SingleInstance::Mode::Catalogue : SingleInstance::Mode::Playback);
-    if (instance.forwardToRunningInstance(arguments)) {
-        return EXIT_SUCCESS;
+    const bool spotifyRequested = arguments.contains(QStringLiteral("--enable-spotify"))
+        || arguments.contains(QStringLiteral("--spotify"))
+        || qEnvironmentVariableIntValue("SWIFTIFY_ENABLE_SPOTIFY") == 1;
+    const bool spotifyDisabled = arguments.contains(QStringLiteral("--disable-spotify"));
+#ifdef SWIFTIFY_HAS_SPOTIFY
+    const bool spotifyEnabled = !catalogueMode && spotifyRequested && !spotifyDisabled;
+#else
+    const bool spotifyEnabled = false;
+#endif
+    SingleInstance instance(catalogueMode ? SingleInstance::Mode::Catalogue : SingleInstance::Mode::Playback,
+                            spotifyEnabled);
+    const auto startup = instance.start(arguments, !catalogueMode && (spotifyRequested || spotifyDisabled));
+    if (startup == SingleInstance::Start::Forwarded) return EXIT_SUCCESS;
+    if (startup == SingleInstance::Start::Failed) {
+        qWarning("Could not contact the running Swiftify instance or start this mode.");
+        return EXIT_FAILURE;
     }
 #ifdef Q_OS_MACOS
     WindowTuner windowTuner;
@@ -318,7 +331,11 @@ int main(int argc, char *argv[])
 #ifdef SWIFTIFY_HAS_YOUTUBE_CLIENT
     if (catalogueMode) {
         youtube::YouTubeController music;
+        QNetworkAccessManager images;
+        ArtworkCache artwork(&images, nullptr, ArtworkCache::Remote::YouTube);
+        QObject::connect(&music, &youtube::YouTubeController::catalogueStopped, &artwork, &ArtworkCache::cancelRemote);
         QQmlApplicationEngine engine;
+        engine.addImageProvider(QStringLiteral("art"), new ArtworkImageProvider);
         configureEngine(engine);
         QObject::connect(&instance, &SingleInstance::commandReceived, &engine, [&engine] {
             if (auto *window = qobject_cast<QWindow *>(engine.rootObjects().value(0))) {
@@ -327,20 +344,12 @@ int main(int argc, char *argv[])
                 window->requestActivate();
             }
         });
-        instance.listen();
         engine.setInitialProperties({{QStringLiteral("music"), QVariant::fromValue(&music)}});
         engine.loadFromModule("Swiftify", "YouTubeWindow");
         return application.exec();
     }
 #endif
 
-    bool spotifyEnabled = false;
-#ifdef SWIFTIFY_HAS_SPOTIFY
-    spotifyEnabled = !arguments.contains(QStringLiteral("--disable-spotify"))
-        && (arguments.contains(QStringLiteral("--enable-spotify"))
-            || arguments.contains(QStringLiteral("--spotify"))
-            || qEnvironmentVariableIntValue("SWIFTIFY_ENABLE_SPOTIFY") == 1);
-#endif
     ErrorCenter errors(nullptr);
     QNetworkAccessManager network;
     RustCore rustCore;
@@ -389,7 +398,8 @@ int main(int argc, char *argv[])
     QObject::connect(&localFiles, &LocalLibrary::scanned, &player,
                      [&] { player.refreshSongDetails(localFiles.allSongs()); });
     AppController app(nullptr);
-    ArtworkCache artwork(&network);
+    ArtworkCache artwork(&network, nullptr, spotifyEnabled ? ArtworkCache::Remote::Playback
+                                                           : ArtworkCache::Remote::Disabled);
     PlayerStyle playerStyle(&player, &theme, &artwork);
     SpectrumSource spectrum(&core, &player);
     PlayHistory listeningHistory(PlayHistory::defaultPath());
@@ -397,11 +407,10 @@ int main(int argc, char *argv[])
     StatsStore stats(&settings, &session, &network, &listeningHistory, &listeningTracker);
 
     QObject::connect(&instance, &SingleInstance::commandReceived, &app, &AppController::handleCommand);
-    instance.listen();
 
 // qt finds d-bus on macos too, but mpris and logind only exist on linux
 #if defined(SWIFTIFY_HAS_DBUS) && defined(Q_OS_LINUX)
-    Mpris mpris(&player);
+    Mpris mpris(&player, &sound);
     QObject::connect(&mpris, &Mpris::raiseRequested, &app, &AppController::raiseRequested);
     QObject::connect(&mpris, &Mpris::quitRequested, &app, &AppController::quit);
     SleepMonitor sleepMonitor(&player);

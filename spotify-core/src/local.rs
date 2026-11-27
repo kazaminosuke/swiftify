@@ -24,9 +24,9 @@ use std::{
     collections::hash_map::DefaultHasher,
     fs,
     hash::{Hash, Hasher},
-    io,
+    io::{self, Seek, Write},
     path::{Path, PathBuf},
-    sync::atomic::{AtomicU64, Ordering},
+    time::{Duration, Instant},
 };
 
 use lofty::{
@@ -40,7 +40,7 @@ use serde::{Deserialize, Serialize};
 use symphonia::core::{
     formats::{FormatOptions, FormatReader},
     io::MediaSourceStream,
-    meta::{MetadataOptions, MetadataRevision, StandardTagKey, StandardVisualKey, Value, Visual},
+    meta::{Limit, MetadataOptions, MetadataRevision, StandardTagKey, StandardVisualKey, Value, Visual},
     probe::Hint,
     units::TimeBase,
 };
@@ -52,6 +52,7 @@ pub const AUDIO_EXTENSIONS: &[&str] = &[
 
 /// the names a cover kept beside the files of an album goes by
 const FOLDER_COVERS: &[&str] = &["cover", "folder", "front", "album", "albumart", "artwork"];
+pub(crate) const MAX_COVER_BYTES: usize = 32 * 1024 * 1024;
 const IMAGE_EXTENSIONS: &[&str] = &["jpg", "jpeg", "png", "webp"];
 
 /// what a file says about itself. anything it does not say is left out, for
@@ -96,8 +97,19 @@ pub struct TagEdits {
 /// which takes the file's place only once it is whole: a write that fails
 /// leaves the song as it was
 pub fn write_tags(path: &Path, edits: &TagEdits, artwork: Option<&[u8]>) -> Result<(), String> {
-    let mut file = Probe::open(path)
-        .and_then(|probe| probe.read())
+    if artwork.is_some_and(|bytes| bytes.len() > MAX_COVER_BYTES) {
+        return Err("the cover is too large".to_owned());
+    }
+    let real_path = fs::canonicalize(path).map_err(|error| error.to_string())?;
+    let before = fs::symlink_metadata(&real_path).map_err(|error| error.to_string())?;
+    if !before.is_file() {
+        return Err("the track is not a regular file".to_owned());
+    }
+    let mut source = fs::File::open(&real_path).map_err(|error| error.to_string())?;
+    let mut file = Probe::new(&mut source)
+        .guess_file_type()
+        .map_err(|error| error.to_string())?
+        .read()
         .map_err(|error| format!("could not read the tags of {}: {error}", path.display()))?;
     let file_type = file.file_type();
 
@@ -126,26 +138,36 @@ pub fn write_tags(path: &Path, edits: &TagEdits, artwork: Option<&[u8]>) -> Resu
         file.insert_tag(tag);
     }
 
-    let directory = path.parent().unwrap_or(Path::new("."));
-    let name = path
-        .file_name()
-        .map(|name| name.to_string_lossy().into_owned())
-        .unwrap_or_default();
-    let partial = directory.join(format!(".{name}.{}.swiftify-tags", std::process::id()));
-    let written = fs::copy(path, &partial)
-        .map_err(|error| format!("could not copy {}: {error}", path.display()))
-        .and_then(|_| {
-            file.save_to_path(&partial, WriteOptions::default())
-                .map_err(|error| format!("could not write the tags of {}: {error}", path.display()))
-        })
-        .and_then(|()| {
-            fs::rename(&partial, path)
-                .map_err(|error| format!("could not replace {}: {error}", path.display()))
-        });
-    if written.is_err() {
-        let _ = fs::remove_file(&partial);
+    let mut write = || -> Result<(), Box<dyn std::error::Error>> {
+        let directory = real_path.parent().unwrap_or(Path::new("."));
+        let mut partial = tempfile::Builder::new()
+            .prefix(".swiftify-tags-")
+            .tempfile_in(directory)?;
+        source.rewind()?;
+        io::copy(&mut source, partial.as_file_mut())?;
+        partial.as_file_mut().rewind()?;
+        file.save_to(partial.as_file_mut(), WriteOptions::default())?;
+        let current = fs::symlink_metadata(&real_path)?;
+        if !same_file(&before, &current) {
+            return Err(io::Error::other("the track changed during tag editing").into());
+        }
+        partial.as_file().set_permissions(before.permissions())?;
+        partial.as_file().sync_all()?;
+        partial.persist(&real_path)?;
+        Ok(())
+    };
+    write().map_err(|error| format!("could not write the tags of {}: {error}", path.display()))
+}
+
+fn same_file(before: &fs::Metadata, after: &fs::Metadata) -> bool {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        if before.dev() != after.dev() || before.ino() != after.ino() {
+            return false;
+        }
     }
-    written
+    after.is_file() && before.len() == after.len() && before.modified().ok() == after.modified().ok()
 }
 
 fn apply_edits(tag: &mut Tag, edits: &TagEdits, artwork: Option<&[u8]>) {
@@ -231,6 +253,9 @@ fn lofty_cover(path: &Path) -> Option<Visual> {
         tag.get_picture_type(PictureType::CoverFront)
             .or_else(|| tag.pictures().first())
     })?;
+    if picture.data().len() > MAX_COVER_BYTES {
+        return None;
+    }
     Some(Visual {
         media_type: picture
             .mime_type()
@@ -246,6 +271,10 @@ fn lofty_cover(path: &Path) -> Option<Visual> {
 }
 
 fn open(path: &Path) -> Result<symphonia::core::probe::ProbeResult, String> {
+    let info = fs::metadata(path).map_err(|error| error.to_string())?;
+    if !info.is_file() {
+        return Err("the track is not a regular file".to_owned());
+    }
     let file = fs::File::open(path)
         .map_err(|error| format!("could not open {}: {error}", path.display()))?;
     let stream = MediaSourceStream::new(Box::new(file), Default::default());
@@ -258,7 +287,10 @@ fn open(path: &Path) -> Result<symphonia::core::probe::ProbeResult, String> {
             &hint,
             stream,
             &FormatOptions::default(),
-            &MetadataOptions::default(),
+            &MetadataOptions {
+                limit_metadata_bytes: Limit::Maximum(2 * 1024 * 1024),
+                limit_visual_bytes: Limit::Maximum(MAX_COVER_BYTES),
+            },
         )
         .map_err(|error| format!("could not read {}: {error}", path.display()))
 }
@@ -266,6 +298,9 @@ fn open(path: &Path) -> Result<symphonia::core::probe::ProbeResult, String> {
 /// the tags of the file at `path`, with an embedded cover written into
 /// `artwork_dir` when there is one
 pub fn read_tags(path: &Path, artwork_dir: Option<&Path>) -> Result<LocalTags, String> {
+    if !path.is_file() {
+        return Err("the track is not a regular file".to_owned());
+    }
     let mut probed = match open(path) {
         Ok(probed) => probed,
         Err(error) => {
@@ -423,7 +458,7 @@ fn duration_ms(format: &mut dyn FormatReader) -> u64 {
     if let (Some(frames), Some(rate)) = (params.n_frames, params.sample_rate)
         && rate > 0
     {
-        return frames * 1000 / u64::from(rate);
+        return frames.saturating_mul(1000) / u64::from(rate);
     }
     // nothing in the header says (a variable rate mp3 without one): count
     // the packets, which reads the file without decoding it
@@ -434,13 +469,22 @@ fn duration_ms(format: &mut dyn FormatReader) -> u64 {
         return 0;
     };
     let mut total = 0u64;
-    while let Ok(packet) = format.next_packet() {
-        if packet.track_id() == id {
-            total += packet.dur;
+    let deadline = Instant::now() + Duration::from_secs(2);
+    for _ in 0..1_000_000 {
+        if Instant::now() >= deadline {
+            break;
+        }
+        match format.next_packet() {
+            Ok(packet) if packet.track_id() == id => total = total.saturating_add(packet.dur),
+            Ok(_) => {}
+            Err(_) => {
+                let time = time_base.calc_time(total);
+                return time.seconds.saturating_mul(1000).saturating_add((time.frac * 1000.0) as u64);
+            }
         }
     }
-    let time = time_base.calc_time(total);
-    time.seconds * 1000 + (time.frac * 1000.0) as u64
+    // A partial traversal is not a duration.
+    0
 }
 
 fn write_cover(visual: &Visual, directory: &Path) -> io::Result<PathBuf> {
@@ -455,19 +499,23 @@ fn write_cover(visual: &Visual, directory: &Path) -> io::Result<PathBuf> {
     let mut hasher = DefaultHasher::new();
     visual.data.hash(&mut hasher);
     let path = directory.join(format!("{:016x}.{extension}", hasher.finish()));
-    if !path.exists() {
-        fs::create_dir_all(directory)?;
-        // written aside and moved into place, so a reader never sees half,
-        // under a name of its own should two files of an album race
-        static WRITES: AtomicU64 = AtomicU64::new(0);
-        let partial = directory.join(format!(
-            "{:016x}.{}.{}.partial",
-            hasher.finish(),
-            std::process::id(),
-            WRITES.fetch_add(1, Ordering::Relaxed)
-        ));
-        fs::write(&partial, &visual.data)?;
-        fs::rename(&partial, &path)?;
+    if visual.data.len() > MAX_COVER_BYTES {
+        return Err(io::Error::other("the cover is too large"));
+    }
+    fs::create_dir_all(directory)?;
+    match fs::symlink_metadata(&path) {
+        Ok(info) if info.is_file() => return Ok(path),
+        Ok(_) => return Err(io::Error::other("invalid artwork cache entry")),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+        Err(error) => return Err(error),
+    }
+    let mut partial = tempfile::NamedTempFile::new_in(directory)?;
+    partial.write_all(&visual.data)?;
+    match partial.persist_noclobber(&path) {
+        Ok(_) => {}
+        Err(error) if error.error.kind() == io::ErrorKind::AlreadyExists
+            && fs::symlink_metadata(&path).is_ok_and(|info| info.is_file()) => {}
+        Err(error) => return Err(error.error),
     }
     Ok(path)
 }
@@ -477,7 +525,7 @@ fn folder_cover(path: &Path) -> Option<PathBuf> {
     let folder = path.parent()?;
     let entries = fs::read_dir(folder).ok()?;
     let mut found: Option<(usize, PathBuf)> = None;
-    for entry in entries.flatten() {
+    for entry in entries.take(20_000).flatten() {
         let candidate = entry.path();
         let (Some(stem), Some(extension)) = (
             candidate.file_stem().and_then(|stem| stem.to_str()),
@@ -494,6 +542,9 @@ fn folder_cover(path: &Path) -> Option<PathBuf> {
         // in the order of the list: a "cover" beats a "folder"
         if let Some(rank) = FOLDER_COVERS.iter().position(|name| stem == *name)
             && found.as_ref().is_none_or(|(best, _)| rank < *best)
+            && fs::symlink_metadata(&candidate).is_ok_and(|info| {
+                info.is_file() && info.len() <= MAX_COVER_BYTES as u64
+            })
         {
             found = Some((rank, candidate));
         }
@@ -621,7 +672,7 @@ mod tests {
                 entry
                     .file_name()
                     .to_string_lossy()
-                    .ends_with(".swiftify-tags")
+                    .starts_with(".swiftify-tags-")
             })
             .collect();
         assert!(leftovers.is_empty());

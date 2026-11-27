@@ -262,7 +262,10 @@ ApplicationWindow {
 
                                     Image {
                                         anchors.fill: parent
-                                        source: entry.artwork
+                                        source: entry.artwork.toString().length
+                                            ? "image://art/" + encodeURIComponent(entry.artwork.toString()) : ""
+                                        sourceSize.width: 160
+                                        sourceSize.height: 160
                                         fillMode: Image.PreserveAspectCrop
                                         asynchronous: true
                                         cache: false

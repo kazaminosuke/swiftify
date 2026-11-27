@@ -274,26 +274,23 @@ private slots:
         auto activity = message.value(QStringLiteral("args")).toObject().value(QStringLiteral("activity")).toObject();
         QCOMPARE(activity.value(QStringLiteral("type")).toInt(), 2);
         QCOMPARE(activity.value(QStringLiteral("name")).toString(), QStringLiteral("Swiftify"));
-        QCOMPARE(activity.value(QStringLiteral("details")).toString(), QStringLiteral("Я\u00a0"));
-        QCOMPARE(activity.value(QStringLiteral("state")).toString(), song.artists);
-        QVERIFY(activity.contains(QStringLiteral("timestamps")));
-        QVERIFY(activity.contains(QStringLiteral("assets")));
-        const auto assets = activity.value(QStringLiteral("assets")).toObject();
-        const QString initialLargeImage = assets.value(QStringLiteral("large_image")).toString();
-        static const QRegularExpression artworkRegex(QStringLiteral(R"(^https://shredos\.dev/img/thumb/artwork[1-5]\.png$)"));
-        QVERIFY(artworkRegex.match(initialLargeImage).hasMatch());
-        QCOMPARE(assets.value(QStringLiteral("large_text")).toString(), song.albumName);
-        QVERIFY(!QJsonDocument(message).toJson().contains("private"));
+        QCOMPARE(activity.value(QStringLiteral("details")).toString(), QStringLiteral("Listening to local music"));
+        QVERIFY(!activity.contains(QStringLiteral("state")));
+        QVERIFY(!activity.contains(QStringLiteral("timestamps")));
+        QVERIFY(!activity.contains(QStringLiteral("assets")));
+        const auto published = QJsonDocument(message).toJson();
+        QVERIFY(!published.contains("private"));
+        QVERIFY(!published.contains(song.artists.toUtf8()));
+        QVERIFY(!published.contains(song.albumName.toUtf8()));
 
         player.pause();
         message = {};
         QTRY_VERIFY(read());
         activity = message.value(QStringLiteral("args")).toObject().value(QStringLiteral("activity")).toObject();
         QCOMPARE(activity.value(QStringLiteral("name")).toString(), QStringLiteral("Swiftify"));
-        QCOMPARE(activity.value(QStringLiteral("details")).toString(), QStringLiteral("Я\u00a0"));
-        QCOMPARE(activity.value(QStringLiteral("state")).toString(), QStringLiteral("Paused · Исполнитель"));
-        QVERIFY(activity.contains(QStringLiteral("timestamps")));
-        QCOMPARE(activity.value(QStringLiteral("assets")).toObject().value(QStringLiteral("large_image")).toString(), initialLargeImage);
+        QCOMPARE(activity.value(QStringLiteral("details")).toString(), QStringLiteral("Listening to local music"));
+        QCOMPARE(activity.value(QStringLiteral("state")).toString(), QStringLiteral("Paused"));
+        QVERIFY(!activity.contains(QStringLiteral("timestamps")));
 
         // Pause doesn't keep sending an activity as wall-clock time advances.
         message = {};
@@ -307,8 +304,8 @@ private slots:
         QTRY_VERIFY(player.isPlaying());
         QTRY_VERIFY(read());
         activity = message.value(QStringLiteral("args")).toObject().value(QStringLiteral("activity")).toObject();
-        QCOMPARE(activity.value(QStringLiteral("state")).toString(), song.artists);
-        QVERIFY(activity.contains(QStringLiteral("timestamps")));
+        QVERIFY(!activity.contains(QStringLiteral("state")));
+        QVERIFY(!activity.contains(QStringLiteral("timestamps")));
 
         // Disabling still explicitly clears the activity, even after a pause.
         player.pause();
@@ -333,8 +330,8 @@ private slots:
         message = {};
         QTRY_VERIFY(read());
         activity = message.value(QStringLiteral("args")).toObject().value(QStringLiteral("activity")).toObject();
-        QCOMPARE(activity.value(QStringLiteral("state")).toString(), QStringLiteral("Paused · Исполнитель"));
-        QVERIFY(activity.contains(QStringLiteral("timestamps")));
+        QCOMPARE(activity.value(QStringLiteral("state")).toString(), QStringLiteral("Paused"));
+        QVERIFY(!activity.contains(QStringLiteral("timestamps")));
         // Ping payload is opaque, not necessarily JSON.
         peer->write(discord::frame(3, QByteArrayLiteral("ping")));
         peer->flush();
@@ -436,15 +433,13 @@ private slots:
         QTRY_VERIFY(read());
         auto activity = message.value(QStringLiteral("args")).toObject().value(QStringLiteral("activity")).toObject();
         QVERIFY(activity.value(QStringLiteral("state")).toString().contains(QStringLiteral("Paused")));
-        QVERIFY(activity.contains(QStringLiteral("timestamps")));
+        QVERIFY(!activity.contains(QStringLiteral("timestamps")));
         message = {};
 
-        // Seeking while paused updates timestamps
+        // Seeking a local file keeps its position private.
         player.seek(50000);
-        QTRY_VERIFY(read());
-        activity = message.value(QStringLiteral("args")).toObject().value(QStringLiteral("activity")).toObject();
-        QVERIFY(activity.contains(QStringLiteral("timestamps")));
-        message = {};
+        QTest::qWait(350);
+        QVERIFY(!read());
 
         // Click start (resume) BEFORE the timer runs out: activity should resume
         player.resume();
@@ -452,7 +447,7 @@ private slots:
         QVERIFY(!presence.inactivityTimerActive());
         QTRY_VERIFY(read());
         activity = message.value(QStringLiteral("args")).toObject().value(QStringLiteral("activity")).toObject();
-        QCOMPARE(activity.value(QStringLiteral("state")).toString(), song.artists);
+        QVERIFY(!activity.contains(QStringLiteral("state")));
         QVERIFY(presence.connected());
         QVERIFY(!presence.idleTerminated());
         message = {};
@@ -486,8 +481,8 @@ private slots:
         message = {};
         QTRY_VERIFY(read());
         activity = message.value(QStringLiteral("args")).toObject().value(QStringLiteral("activity")).toObject();
-        QCOMPARE(activity.value(QStringLiteral("state")).toString(), song.artists);
-        QVERIFY(activity.contains(QStringLiteral("timestamps")));
+        QVERIFY(!activity.contains(QStringLiteral("state")));
+        QVERIFY(!activity.contains(QStringLiteral("timestamps")));
 
         settings.setDiscordEnabled(false);
     }

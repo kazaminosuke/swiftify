@@ -247,6 +247,7 @@ private:
     bool m_evaluatingStoredLogin = m_enabled;
     /// reading the saved logins at launch is still under way
     bool m_restoring = false;
+    bool m_loggingOut = false;
     bool m_playbackConnectionIsSuspect = false;
     std::optional<LoginPurpose> m_loginPurpose;
     QUrl m_authorizationUrl;
@@ -289,7 +290,7 @@ QCoro::Task<T> SpotifySession::withLibraryAccessToken(std::function<QCoro::Task<
 {
 #ifdef SWIFTIFY_HAS_SPOTIFY
     const quint64 generation = m_generation;
-    if (!m_enabled || m_libraryAccessToken.isEmpty()) {
+    if (!m_enabled || m_loggingOut || m_libraryAccessToken.isEmpty()) {
         throw SpotifyError(SpotifyError::Kind::Session, QStringLiteral("Connect your Spotify library to continue."));
     }
 

@@ -20,6 +20,7 @@
 
 #include "spotify/SpotifyError.h"
 
+#include <QScopedValueRollback>
 #include <swiftify_core.h>
 
 #include <QCoroSignal>
@@ -119,30 +120,34 @@ void RustCore::open()
 
 void RustCore::close()
 {
+    QScopedValueRollback closing(m_closing, true);
+    auto *closed = std::exchange(m_core, nullptr);
+    ++m_generation;
 #ifdef Q_OS_WIN
     // waits for a callback under way, so none reaches this after
-    swiftify_core_set_completion_callback(m_core, nullptr, nullptr);
+    swiftify_core_set_completion_callback(closed, nullptr, nullptr);
 #endif
     m_notifier.reset();
     // nothing will complete these now. waking them as cancelled is what lets
     // their callers unwind, as swift's task cancellation would.
     const auto pending = std::exchange(m_pending, {});
+    swiftify_core_free(closed);
     for (const auto &request : pending) {
         emit request->finished(false, true, {});
     }
-    swiftify_core_free(m_core);
-    m_core = nullptr;
 }
 
 void RustCore::reset()
 {
+    if (m_closing) return;
     close();
-    ++m_generation;
     open();
 }
 
 void RustCore::drainCompletions()
 {
+    if (!m_core) return;
+    const auto generation = m_generation;
 #ifndef Q_OS_WIN
     char buffer[64];
     while (::read(swiftify_core_completion_fd(m_core), buffer, sizeof buffer) > 0) {
@@ -152,7 +157,7 @@ void RustCore::drainCompletions()
     uint64_t id = 0;
     bool ok = false;
     char *payload = nullptr;
-    while (swiftify_core_take_completion(m_core, &id, &ok, &payload)) {
+    while (m_core && m_generation == generation && swiftify_core_take_completion(m_core, &id, &ok, &payload)) {
         const QString text = takeString(payload);
         if (const auto request = m_pending.take(id)) {
             emit request->finished(ok, false, text);
@@ -163,6 +168,7 @@ void RustCore::drainCompletions()
 template <typename Start>
 QCoro::Task<QString> RustCore::request(Start start)
 {
+    if (!m_core) throw Cancelled();
     const quint64 id = ++m_nextRequestId;
     const auto pending = std::make_shared<CoreRequest>();
     m_pending.insert(id, pending);

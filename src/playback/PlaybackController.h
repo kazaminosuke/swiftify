@@ -118,6 +118,7 @@ public:
     bool isLoading() const { return m_loading; }
     int positionMs() const { return int(m_publishedPositionMs); }
     /// where playback really is, polled four times a second
+    quint64 mediaClockRevision() const { return m_clockRevision; }
     quint32 livePositionMs() const { return m_livePositionMs; }
     int durationMs() const { return int(m_durationMs); }
     double volume() const { return m_volume; }

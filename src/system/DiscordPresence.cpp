@@ -28,7 +28,6 @@
 #include <QJsonDocument>
 #include <QJSEngine>
 #include <QLoggingCategory>
-#include <QRandomGenerator>
 #include <QSignalBlocker>
 #include <QUuid>
 #include <QtEndian>
@@ -257,7 +256,6 @@ void DiscordPresence::configure()
     m_endpoints.clear();
     m_failure = Failure::None;
     m_failureCode = -1;
-    m_localArtworkInstanceId = 0;
     emit statusChanged();
     if (!m_settings->discordEnabled() || m_settings->discordApplicationId().isEmpty()) return;
     m_endpoints = m_socketLocator();
@@ -408,8 +406,20 @@ void DiscordPresence::update()
     if (!m_player->hasSong() || m_player->isLoading()) { clear(); return; }
     const Song song = m_player->currentSong();
     if (song.uri == QLatin1StringView(PlaybackController::kLoadingTestUri)) { clear(); return; }
-    const QString title = fitText(song.name);
     const bool playing = m_player->isPlaying();
+    if (song.isLocalFile()) {
+        QJsonObject activity {{QStringLiteral("type"), 2},
+                              {QStringLiteral("name"), QStringLiteral("Swiftify")},
+                              {QStringLiteral("details"), tr("Listening to local music")},
+                              {QStringLiteral("instance"), false}};
+        if (!playing) activity.insert(QStringLiteral("state"), tr("Paused"));
+        if (m_published && activity == m_lastMetadata) return;
+        send(1, QJsonDocument(command(activity)).toJson(QJsonDocument::Compact));
+        m_lastMetadata = activity;
+        m_published = true;
+        return;
+    }
+    const QString title = fitText(song.name);
     QJsonObject activity {{QStringLiteral("type"), 2},
                           {QStringLiteral("name"), QStringLiteral("Swiftify")},
                           {QStringLiteral("details"), title.isEmpty() ? QStringLiteral("Listening to music") : title},
@@ -417,20 +427,11 @@ void DiscordPresence::update()
     const QString state = fitText(playing ? song.artists
         : song.artists.trimmed().isEmpty() ? tr("Paused") : tr("Paused") + QStringLiteral(" · ") + song.artists);
     if (!state.isEmpty()) activity.insert(QStringLiteral("state"), state);
-    // Never expose local file paths, filenames, or private artwork URLs.
-    if (!song.isLocalFile() && song.artworkUrl.scheme() == QLatin1StringView("https")
-        && song.artworkUrl.host() == QLatin1StringView("i.scdn.co")) {
+    if (song.artworkUrl.scheme() == QLatin1StringView("https")
+        && song.artworkUrl.host() == QLatin1StringView("i.scdn.co")
+        && song.artworkUrl.userInfo().isEmpty() && song.artworkUrl.port(443) == 443
+        && !song.artworkUrl.hasQuery() && !song.artworkUrl.hasFragment()) {
         QJsonObject assets {{QStringLiteral("large_image"), song.artworkUrl.toString()}};
-        const QString album = fitText(song.albumName);
-        if (!album.isEmpty()) assets.insert(QStringLiteral("large_text"), album);
-        activity.insert(QStringLiteral("assets"), assets);
-    } else if (song.isLocalFile()) {
-        if (m_localArtworkInstanceId != song.instanceId) {
-            m_localArtworkInstanceId = song.instanceId;
-            m_localArtworkIndex = QRandomGenerator::global()->bounded(1, 6);
-        }
-        const QString fallbackUrl = QStringLiteral("https://shredos.dev/img/thumb/artwork%1.png").arg(m_localArtworkIndex);
-        QJsonObject assets {{QStringLiteral("large_image"), fallbackUrl}};
         const QString album = fitText(song.albumName);
         if (!album.isEmpty()) assets.insert(QStringLiteral("large_text"), album);
         activity.insert(QStringLiteral("assets"), assets);
