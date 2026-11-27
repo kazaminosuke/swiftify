@@ -69,7 +69,16 @@ inline std::optional<qint64> retryAfterMs(QByteArray value, QDateTime now = QDat
         if (!ok || seconds > static_cast<quint64>(maxDelay / 1000)) return maxDelay;
         return static_cast<qint64>(seconds) * 1000;
     }
-    const auto date = QDateTime::fromString(QString::fromLatin1(value), Qt::RFC2822Date);
+    const auto text = QString::fromLatin1(value);
+    auto date = QDateTime::fromString(text, Qt::RFC2822Date);
+    if (!date.isValid() && value.endsWith(" GMT")) {
+        // Qt's RFC parser accepts numeric offsets and asctime, but not the
+        // literal GMT used by the two other HTTP-date formats.
+        date = QDateTime::fromString(text, QStringLiteral("ddd, dd MMM yyyy HH:mm:ss t"));
+        if (!date.isValid()) {
+            date = QDateTime::fromString(text, QStringLiteral("dddd, dd-MMM-yy HH:mm:ss t"), now.date().year() - 49);
+        }
+    }
     if (!date.isValid()) return std::nullopt;
     return qBound(qint64(0), now.msecsTo(date), maxDelay);
 }
