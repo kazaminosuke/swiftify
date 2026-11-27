@@ -21,6 +21,9 @@
 #include "library/CollectionModels.h"
 #include "library/SongListModel.h"
 
+#include <atomic>
+#include <memory>
+
 #include <QHash>
 #include <QJsonObject>
 #include <QObject>
@@ -152,7 +155,7 @@ private:
     };
 
     static ScanResult scan(const QStringList &sources, QHash<QString, Entry> known, const QString &artworkDirectory,
-                           const QString &cachePath);
+                           const QString &cachePath, const std::shared_ptr<std::atomic_bool> &cancel);
     static Song songFor(const QString &path, const QJsonObject &tags);
     /// the songs among `entries`, by artist and album, then track
     static QList<Song> songsFrom(const QHash<QString, Entry> &entries);
@@ -230,6 +233,7 @@ private:
     /// writes a cover under a name of its own, so nothing cached shows the
     /// old one, and lets the old one go
     QString writeCover(const StoredPlaylist &stored, const QByteArray &jpeg) const;
+    QString coverPath(const StoredPlaylist &stored) const;
 
     Settings *m_settings;
     QString m_cachePath;
@@ -255,6 +259,7 @@ private:
     PlaylistListModel *m_playlists;
     /// a search started after another one makes that one's result stale
     quint64 m_scanGeneration = 0;
+    std::shared_ptr<std::atomic_bool> m_scanCancellation;
     bool m_rescanQueued = false;
 };
 

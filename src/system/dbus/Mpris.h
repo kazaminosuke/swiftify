@@ -20,12 +20,13 @@
 
 #include <QDBusAbstractAdaptor>
 #include <QDBusObjectPath>
-#include <QDateTime>
+#include <QElapsedTimer>
 #include <QObject>
 #include <QVariantMap>
 
 namespace swiftify {
 
+class AudioShaping;
 class PlaybackController;
 
 /// the player on the session bus as org.mpris.MediaPlayer2.swiftify, so media
@@ -35,7 +36,7 @@ class Mpris : public QObject {
     Q_OBJECT
 
 public:
-    explicit Mpris(PlaybackController *player, QObject *parent = nullptr);
+    explicit Mpris(PlaybackController *player, AudioShaping *sound, QObject *parent = nullptr);
     ~Mpris() override;
 
     bool isRegistered() const { return m_registered; }
@@ -50,6 +51,8 @@ public:
     QString playbackStatus() const;
     QVariantMap metadata() const;
     qlonglong positionMicroseconds() const;
+    double playbackRate() const;
+    void setPlaybackRate(double rate);
     bool canGoNext() const;
     bool canGoPrevious() const;
     bool hasSong() const;
@@ -65,8 +68,9 @@ private:
     void emitPropertiesChanged(const QString &interface, const QVariantMap &changed);
 
     PlaybackController *m_player;
+    AudioShaping *m_sound;
     bool m_registered = false;
-    QDateTime m_outputArrivedAt;
+    QElapsedTimer m_outputArrivedAt;
 
     // what was last published, to send only what changed
     QString m_publishedStatus;
@@ -79,7 +83,11 @@ private:
     bool m_publishedShuffle = false;
     QString m_publishedLoop;
     qlonglong m_lastPositionUs = 0;
-    QDateTime m_lastPositionAt;
+    QElapsedTimer m_lastPositionAt;
+    quint64 m_positionRevision = 0;
+    double m_publishedRate = 1.0;
+    double m_lastPositionRate = 1.0;
+    bool m_lastPositionWasPlaying = false;
 };
 
 /// org.mpris.MediaPlayer2
@@ -124,8 +132,8 @@ class MprisPlayerAdaptor : public QDBusAbstractAdaptor {
     Q_PROPERTY(QVariantMap Metadata READ metadata)
     Q_PROPERTY(double Volume READ volume WRITE setVolume)
     Q_PROPERTY(qlonglong Position READ position)
-    Q_PROPERTY(double MinimumRate READ rate CONSTANT)
-    Q_PROPERTY(double MaximumRate READ rate CONSTANT)
+    Q_PROPERTY(double MinimumRate READ minimumRate CONSTANT)
+    Q_PROPERTY(double MaximumRate READ maximumRate CONSTANT)
     Q_PROPERTY(bool CanGoNext READ canGoNext)
     Q_PROPERTY(bool CanGoPrevious READ canGoPrevious)
     Q_PROPERTY(bool CanPlay READ hasSong)
@@ -139,8 +147,10 @@ public:
     QString playbackStatus() const { return m_mpris->playbackStatus(); }
     QString loopStatus() const;
     void setLoopStatus(const QString &status);
-    double rate() const { return 1.0; }
-    void setRate(double) {}
+    double rate() const { return m_mpris->playbackRate(); }
+    void setRate(double rate) { m_mpris->setPlaybackRate(rate); }
+    double minimumRate() const { return 0.5; }
+    double maximumRate() const { return 2.0; }
     bool shuffle() const;
     void setShuffle(bool shuffle);
     QVariantMap metadata() const { return m_mpris->metadata(); }

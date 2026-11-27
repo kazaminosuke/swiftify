@@ -21,6 +21,8 @@
 #include "spotify/SpotifyError.h"
 
 #include <QCoroTask>
+#include <QNetworkReply>
+#include <QPointer>
 
 #include <memory>
 #include <utility>
@@ -29,11 +31,35 @@ namespace swiftify {
 
 /// set when the work holding it has been withdrawn. checked after every await,
 /// the way swift code calls Task.checkCancellation().
-using CancelToken = std::shared_ptr<bool>;
+class Cancellation {
+public:
+    bool cancelled() const { return m_cancelled; }
+
+    void watch(QNetworkReply *reply)
+    {
+        m_replies.removeIf([](const auto &pending) { return !pending || pending->isFinished(); });
+        m_replies.append(reply);
+    }
+
+    void cancel()
+    {
+        m_cancelled = true;
+        const auto replies = std::exchange(m_replies, {});
+        for (const auto &reply : replies) {
+            if (reply && !reply->isFinished()) reply->abort();
+        }
+    }
+
+private:
+    bool m_cancelled = false;
+    QList<QPointer<QNetworkReply>> m_replies;
+};
+
+using CancelToken = std::shared_ptr<Cancellation>;
 
 inline bool isCancelled(const CancelToken &token)
 {
-    return token && *token;
+    return token && token->cancelled();
 }
 
 inline void throwIfCancelled(const CancelToken &token)
@@ -51,16 +77,13 @@ public:
     CancelToken renew()
     {
         cancel();
-        m_token = std::make_shared<bool>(false);
+        m_token = std::make_shared<Cancellation>();
         return m_token;
     }
 
     void cancel()
     {
-        if (m_token) {
-            *m_token = true;
-            m_token.reset();
-        }
+        if (auto token = std::exchange(m_token, {})) token->cancel();
     }
 
     /// clears the slot if `token` is still the one in it

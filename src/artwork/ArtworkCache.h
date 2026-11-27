@@ -23,6 +23,8 @@
 #include <QImage>
 #include <QObject>
 #include <QQuickAsyncImageProvider>
+#include <QQueue>
+#include <QThreadPool>
 #include <QUrl>
 #include <QCoroTask>
 
@@ -30,6 +32,7 @@
 #include <memory>
 
 class QNetworkAccessManager;
+class QNetworkReply;
 
 namespace swiftify {
 
@@ -46,7 +49,11 @@ public:
     using BytesCallback = std::function<void(const QByteArray &)>;
     using ImageCallback = std::function<void(const QImage &)>;
 
-    explicit ArtworkCache(QNetworkAccessManager *network, QObject *parent = nullptr);
+    enum class Remote { Playback, YouTube, Disabled };
+    explicit ArtworkCache(QNetworkAccessManager *network, QObject *parent = nullptr,
+                          Remote remote = Remote::Playback);
+    static bool allowsRemote(const QUrl &url, Remote remote);
+    void cancelRemote();
     ~ArtworkCache() override;
 
     static ArtworkCache *instance();
@@ -62,9 +69,17 @@ public:
     void invalidate(const QUrl &url);
 
 private:
+    void pumpDownloads();
     void finishDownload(const QUrl &url, const QByteArray &data);
+    void deliver(const QUrl &url, const QByteArray &data);
 
     QNetworkAccessManager *m_network;
+    const Remote m_remote;
+    QThreadPool m_workers;
+    QQueue<QUrl> m_waiting;
+    QHash<QUrl, QNetworkReply *> m_replies;
+    int m_active = 0;
+    qint64 m_decodingBytes = 0;
     QCache<QUrl, QByteArray> m_encoded;
     QCache<QString, QImage> m_decoded;
     QHash<QUrl, QList<BytesCallback>> m_downloads;

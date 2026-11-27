@@ -42,7 +42,7 @@ use std::{
     sync::{Arc, Mutex, OnceLock},
 };
 
-use tokio::runtime::{Builder, Runtime};
+use tokio::{runtime::{Builder, Runtime}, sync::watch};
 
 use crate::{SpotifyCore, equalizer_frequencies};
 
@@ -146,6 +146,7 @@ impl CompletionQueue {
 pub struct SwiftifyCore {
     core: Arc<SpotifyCore>,
     completions: Arc<CompletionQueue>,
+    closing: watch::Sender<bool>,
 }
 
 impl SwiftifyCore {
@@ -156,8 +157,16 @@ impl SwiftifyCore {
     {
         let completions = Arc::clone(&self.completions);
         let future = operation(Arc::clone(&self.core));
+        let mut closing = self.closing.subscribe();
         runtime().spawn(async move {
-            completions.push(request_id, future.await.map(Into::into));
+            if *closing.borrow_and_update() {
+                return;
+            }
+            tokio::select! {
+                biased;
+                _ = closing.changed() => {}
+                result = future => completions.push(request_id, result.map(Into::into)),
+            }
         });
     }
 }
@@ -220,12 +229,13 @@ pub extern "C" fn swiftify_core_new() -> *mut SwiftifyCore {
     Box::into_raw(Box::new(SwiftifyCore {
         core: Arc::new(SpotifyCore::new()),
         completions: Arc::new(completions),
+        closing: watch::Sender::new(false),
     }))
 }
 
 /// # Safety
 /// `core` is null or a pointer from `swiftify_core_new` that is not used again.
-/// calls still running finish in the background and their results are dropped.
+/// Cancel async operations. Blocking reads may finish after the handle closes.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn swiftify_core_free(core: *mut SwiftifyCore) {
     if core.is_null() {
@@ -233,6 +243,7 @@ pub unsafe extern "C" fn swiftify_core_free(core: *mut SwiftifyCore) {
     }
     // SAFETY: the caller hands back ownership of a pointer from `swiftify_core_new`.
     let core = unsafe { Box::from_raw(core) };
+    core.closing.send_replace(true);
     core.core.disconnect();
 }
 
@@ -562,6 +573,9 @@ pub unsafe extern "C" fn swiftify_write_local_tags(
         Ok(edits) => edits,
         Err(message) => return into_raw(format!("the edits could not be read: {message}")),
     };
+    if !artwork.is_null() && artwork_len > crate::local::MAX_COVER_BYTES {
+        return into_raw("the cover is too large".to_owned());
+    }
     let artwork = (!artwork.is_null() && artwork_len > 0)
         // SAFETY: the caller guarantees `artwork_len` readable bytes.
         .then(|| unsafe { std::slice::from_raw_parts(artwork, artwork_len) });

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "youtube/YouTubeApi.h"
 #include "network/BoundedReply.h"
+#include "artwork/ArtworkCache.h"
 
 #include <QCoreApplication>
 #include <QJsonArray>
@@ -82,8 +83,7 @@ QUrl thumbnail(const QJsonObject &snippet)
     for (const auto size : {"medium", "default", "high"}) {
         const QJsonObject image = thumbnails.value(QLatin1StringView(size)).toObject();
         const QUrl url(image.value(QStringLiteral("url")).toString());
-        if (url.isValid() && url.scheme() == QLatin1StringView("https") && !url.host().isEmpty()
-            && url.userInfo().isEmpty()) {
+        if (ArtworkCache::allowsRemote(url, ArtworkCache::Remote::YouTube)) {
             return url;
         }
     }

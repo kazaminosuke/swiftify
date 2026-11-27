@@ -17,6 +17,7 @@
  */
 
 #include "system/dbus/Mpris.h"
+#include "audio/AudioShaping.h"
 
 #include "playback/PlaybackController.h"
 
@@ -46,9 +47,10 @@ QDBusObjectPath trackPath(const Song &song)
 
 } // namespace
 
-Mpris::Mpris(PlaybackController *player, QObject *parent)
+Mpris::Mpris(PlaybackController *player, AudioShaping *sound, QObject *parent)
     : QObject(parent)
     , m_player(player)
+    , m_sound(sound)
 {
     new MprisRootAdaptor(this);
     new MprisPlayerAdaptor(this);
@@ -74,6 +76,7 @@ Mpris::Mpris(PlaybackController *player, QObject *parent)
     connect(m_player, &PlaybackController::shuffleChanged, this, &Mpris::update);
     connect(m_player, &PlaybackController::repeatModeChanged, this, &Mpris::update);
     connect(m_player, &PlaybackController::positionChanged, this, &Mpris::checkForJump);
+    connect(m_sound, &AudioShaping::shapingChanged, this, &Mpris::update);
     update();
 }
 
@@ -86,12 +89,12 @@ Mpris::~Mpris()
 
 void Mpris::noteOutputArrived()
 {
-    m_outputArrivedAt = QDateTime::currentDateTimeUtc();
+    m_outputArrivedAt.start();
 }
 
 bool Mpris::startIsRefused() const
 {
-    return m_outputArrivedAt.isValid() && m_outputArrivedAt.msecsTo(QDateTime::currentDateTimeUtc()) < kConnectionPlayGraceMs;
+    return m_outputArrivedAt.isValid() && m_outputArrivedAt.elapsed() < kConnectionPlayGraceMs;
 }
 
 bool Mpris::hasSong() const
@@ -125,6 +128,18 @@ QString Mpris::playbackStatus() const
 qlonglong Mpris::positionMicroseconds() const
 {
     return qlonglong(m_player->livePositionMs()) * 1000;
+}
+
+double Mpris::playbackRate() const
+{
+    return hasSong() && m_player->currentSong().isLocalFile() ? m_sound->tempo() : 1.0;
+}
+
+void Mpris::setPlaybackRate(double rate)
+{
+    if (hasSong() && m_player->currentSong().isLocalFile() && rate >= 0.5 && rate <= 2.0) {
+        m_sound->setTempo(rate);
+    }
 }
 
 QVariantMap Mpris::metadata() const
@@ -183,6 +198,7 @@ void Mpris::update()
         changed.insert(QStringLiteral("CanPlay"), songPresent);
         changed.insert(QStringLiteral("CanPause"), songPresent);
     }
+    publish(QStringLiteral("Rate"), m_publishedRate, playbackRate());
     publish(QStringLiteral("Volume"), m_publishedVolume, m_player->volume());
     publish(QStringLiteral("Shuffle"), m_publishedShuffle, m_player->isShuffleEnabled());
     const QString loop = m_player->repeatMode() == PlaybackController::RepeatMode::One ? QStringLiteral("Track")
@@ -193,35 +209,27 @@ void Mpris::update()
         emitPropertiesChanged(kPlayerInterface, changed);
     }
 
-    // clients run the clock themselves from the playback state, so only a
-    // position that drifted from where that clock says it is, a seek or a
-    // stall, is news.
-    const QDateTime now = QDateTime::currentDateTimeUtc();
-    const qlonglong position = positionMicroseconds();
-    const qlonglong elapsed = m_lastPositionAt.isValid() && m_player->isPlaying() ? m_lastPositionAt.msecsTo(now) * 1000 : 0;
-    if (std::llabs(m_lastPositionUs + elapsed - position) >= 1'000'000 || changed.contains(QStringLiteral("Metadata"))) {
-        if (auto *adaptor = findChild<MprisPlayerAdaptor *>()) {
-            emit adaptor->Seeked(position);
-        }
-    }
-    m_lastPositionUs = position;
-    m_lastPositionAt = now;
+    checkForJump();
+    m_lastPositionUs = positionMicroseconds();
+    m_lastPositionWasPlaying = m_player->isPlaying();
+    m_lastPositionRate = playbackRate();
+    m_lastPositionAt.start();
 }
 
 void Mpris::checkForJump()
 {
-    if (!m_registered || !m_player->hasSong() || !m_lastPositionAt.isValid()) {
-        return;
-    }
-    const QDateTime now = QDateTime::currentDateTimeUtc();
+    if (!m_registered || !m_player->hasSong()) return;
+    const auto revision = m_player->mediaClockRevision();
     const qlonglong position = positionMicroseconds();
-    const qlonglong elapsed = m_player->isPlaying() ? m_lastPositionAt.msecsTo(now) * 1000 : 0;
-    if (std::llabs(m_lastPositionUs + elapsed - position) >= 1'000'000) {
-        if (auto *adaptor = findChild<MprisPlayerAdaptor *>()) {
-            emit adaptor->Seeked(position);
-        }
+    const auto elapsed = m_lastPositionAt.isValid() && m_lastPositionWasPlaying
+        ? qRound64(m_lastPositionAt.nsecsElapsed() / 1000.0 * m_lastPositionRate) : 0;
+    if (revision != m_positionRevision || std::llabs(m_lastPositionUs + elapsed - position) >= 1'000'000) {
+        m_positionRevision = revision;
+        if (auto *adaptor = findChild<MprisPlayerAdaptor *>()) emit adaptor->Seeked(position);
         m_lastPositionUs = position;
-        m_lastPositionAt = now;
+        m_lastPositionAt.start();
+        m_lastPositionWasPlaying = m_player->isPlaying();
+        m_lastPositionRate = playbackRate();
     }
 }
 

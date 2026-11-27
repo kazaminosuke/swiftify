@@ -19,6 +19,7 @@
 #include "spotify/OAuthFlow.h"
 
 #include "spotify/SpotifyError.h"
+#include "network/BoundedReply.h"
 
 #include <QCoreApplication>
 #include <QCryptographicHash>
@@ -28,6 +29,7 @@
 #include <QNetworkReply>
 #include <QPointer>
 #include <QRandomGenerator>
+#include <QScopeGuard>
 #include <QTcpSocket>
 #include <QUrlQuery>
 #include <QCoroNetworkReply>
@@ -38,6 +40,10 @@
 namespace swiftify {
 
 namespace {
+
+constexpr int maxCallbackBytes = 8192;
+constexpr int maxConnections = 8;
+constexpr qint64 maxTokenReply = 64 * 1024;
 
 QByteArray callbackPage()
 {
@@ -53,6 +59,8 @@ QByteArray httpResponse(int status, const QByteArray &reason, const QByteArray &
 {
     return "HTTP/1.1 " + QByteArray::number(status) + ' ' + reason + "\r\n"
         "Content-Type: text/html; charset=utf-8\r\n"
+        "Cache-Control: no-store\r\n"
+        "Referrer-Policy: no-referrer\r\n"
         "Content-Length: " + QByteArray::number(body.size()) + "\r\n"
         "Connection: close\r\n\r\n" + body;
 }
@@ -87,6 +95,12 @@ OAuthFlow::OAuthFlow(QNetworkAccessManager *network, QObject *parent)
     : QObject(parent)
     , m_network(network)
 {
+    m_server.setMaxPendingConnections(maxConnections);
+    m_loginDeadline.setSingleShot(true);
+    connect(&m_loginDeadline, &QTimer::timeout, this, [this] {
+        cancel();
+        emit authorizationTimedOut();
+    });
     connect(&m_server, &QTcpServer::newConnection, this, &OAuthFlow::acceptConnection);
 }
 
@@ -95,8 +109,9 @@ OAuthFlow::~OAuthFlow() = default;
 bool OAuthFlow::isCallbackUrl(const QUrl &url)
 {
     const QUrl redirect = redirectUri();
-    return url.scheme() == redirect.scheme() && url.host() == redirect.host() && url.port() == redirect.port()
-        && url.path() == redirect.path();
+    return url.isValid() && url.scheme() == redirect.scheme() && url.host() == redirect.host()
+        && url.port() == redirect.port() && url.path() == redirect.path() && url.userInfo().isEmpty()
+        && !url.hasFragment();
 }
 
 QString OAuthFlow::randomUrlSafeString(int byteCount)
@@ -140,43 +155,53 @@ QUrl OAuthFlow::beginAuthorization(const QString &rawClientId, const QStringList
     m_codeVerifier = verifier;
     m_expectedState = state;
     m_receivedCallback = false;
+    m_loginDeadline.start(180'000);
     return url;
 }
 
 void OAuthFlow::acceptConnection()
 {
     while (QTcpSocket *socket = m_server.nextPendingConnection()) {
-        connect(socket, &QTcpSocket::disconnected, socket, &QObject::deleteLater);
+        if (m_sockets.size() >= maxConnections) {
+            socket->abort();
+            socket->deleteLater();
+            continue;
+        }
+        m_sockets.insert(socket);
+        connect(socket, &QTcpSocket::disconnected, this, [this, socket] {
+            m_sockets.remove(socket);
+            socket->deleteLater();
+        });
+        socket->setReadBufferSize(maxCallbackBytes + 1);
+        QTimer::singleShot(3000, socket, [socket] { socket->abort(); });
         connect(socket, &QTcpSocket::readyRead, this, [this, socket] { handleRequest(socket); });
+        handleRequest(socket);
     }
 }
 
 void OAuthFlow::handleRequest(QTcpSocket *socket)
 {
-    // only the request line matters. browsers send it in the first packet.
-    if (!socket->canReadLine()) {
-        if (socket->bytesAvailable() > 8192) {
-            socket->abort();
-        }
+    if (socket->bytesAvailable() > maxCallbackBytes) {
+        socket->abort();
         return;
     }
-    const QList<QByteArray> requestLine = socket->readLine().trimmed().split(' ');
-    QUrl url;
-    if (requestLine.size() >= 2 && requestLine[0] == "GET") {
-        url = QUrl(QStringLiteral("http://127.0.0.1:%1").arg(kRedirectPort) + QString::fromLatin1(requestLine[1]));
-    }
+    if (!socket->canReadLine()) return;
 
-    if (!isCallbackUrl(url)) {
-        socket->write(httpResponse(404, "Not Found", QByteArray()));
+    const auto line = socket->readLine(maxCallbackBytes + 1).trimmed().split(' ');
+    QUrl url;
+    if (line.size() == 3 && line[0] == "GET" && line[1].startsWith("/login?")
+        && (line[2] == "HTTP/1.1" || line[2] == "HTTP/1.0")) {
+        url = QUrl(QStringLiteral("http://127.0.0.1:%1").arg(kRedirectPort) + QString::fromLatin1(line[1]),
+                   QUrl::StrictMode);
+    }
+    const auto states = QUrlQuery(url).allQueryItemValues(QStringLiteral("state"), QUrl::FullyDecoded);
+    if (!isCallbackUrl(url) || states.size() != 1 || states.front() != m_expectedState || m_receivedCallback) {
+        socket->write(httpResponse(400, "Bad Request", QByteArray()));
         socket->disconnectFromHost();
         return;
     }
-
     socket->write(httpResponse(200, "OK", callbackPage()));
     socket->disconnectFromHost();
-    if (m_receivedCallback) {
-        return;
-    }
     m_receivedCallback = true;
     stopListening();
     emit callbackReceived(url);
@@ -184,6 +209,7 @@ void OAuthFlow::handleRequest(QTcpSocket *socket)
 
 void OAuthFlow::stopListening()
 {
+    m_loginDeadline.stop();
     if (m_server.isListening()) {
         m_server.close();
     }
@@ -191,9 +217,16 @@ void OAuthFlow::stopListening()
 
 void OAuthFlow::cancel()
 {
+    ++m_generation;
     stopListening();
     m_codeVerifier.clear();
     m_expectedState.clear();
+    for (auto *socket : m_sockets.values()) socket->abort();
+    QList<QPointer<QNetworkReply>> replies;
+    for (auto *reply : std::as_const(m_replies)) replies.append(reply);
+    for (const auto &reply : replies) {
+        if (reply && !reply->isFinished()) reply->abort();
+    }
 }
 
 QCoro::Task<OAuthToken> OAuthFlow::exchangeCallback(QUrl callbackUrl, QString clientId)
@@ -205,17 +238,15 @@ QCoro::Task<OAuthToken> OAuthFlow::exchangeCallback(QUrl callbackUrl, QString cl
     const QString expectedState = std::exchange(m_expectedState, {});
 
     const QUrlQuery query(callbackUrl);
-    if (query.hasQueryItem(QStringLiteral("error"))) {
-        throw SpotifyError(SpotifyError::Kind::OAuth,
-                           QStringLiteral("Spotify authorization was denied: %1")
-                               .arg(query.queryItemValue(QStringLiteral("error"), QUrl::FullyDecoded)));
-    }
-    if (query.queryItemValue(QStringLiteral("state"), QUrl::FullyDecoded) != expectedState) {
+    if (query.allQueryItemValues(QStringLiteral("state"), QUrl::FullyDecoded) != QStringList{expectedState}) {
         throw SpotifyError(SpotifyError::Kind::OAuth,
                            QStringLiteral("Spotify returned an authorization response with an invalid state."));
     }
+    if (query.hasQueryItem(QStringLiteral("error"))) {
+        throw SpotifyError(SpotifyError::Kind::OAuth, QStringLiteral("Spotify authorization was denied."));
+    }
     const QString code = query.queryItemValue(QStringLiteral("code"), QUrl::FullyDecoded);
-    if (code.isEmpty()) {
+    if (code.isEmpty() || query.allQueryItemValues(QStringLiteral("code")).size() != 1) {
         throw SpotifyError(SpotifyError::Kind::OAuth, QStringLiteral("Spotify returned an invalid authorization callback."));
     }
 
@@ -239,33 +270,47 @@ QCoro::Task<OAuthToken> OAuthFlow::refreshAccessToken(QString refreshToken, QStr
 
 QCoro::Task<OAuthToken> OAuthFlow::requestToken(QUrlQuery form)
 {
-    QNetworkRequest request(tokenEndpoint());
+    const QUrl url = tokenEndpoint();
+    const bool fixture = url.scheme() == QLatin1StringView("http") && url.host() == QLatin1StringView("127.0.0.1");
+    if (!fixture && url != QUrl(QStringLiteral("https://accounts.spotify.com/api/token"))) {
+        throw SpotifyError(SpotifyError::Kind::OAuth, QStringLiteral("Invalid Spotify token endpoint."));
+    }
+    QNetworkRequest request(url);
+    privateRequest(request);
     request.setHeader(QNetworkRequest::ContentTypeHeader, QByteArray("application/x-www-form-urlencoded"));
-    request.setTransferTimeout(30'000);
-
-    std::unique_ptr<QNetworkReply> reply(m_network->post(request, form.toString(QUrl::FullyEncoded).toUtf8()));
-    co_await qCoro(reply.get()).waitForFinished();
-
-    const QByteArray data = reply->readAll();
-    const int status = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
-    if (status < 200 || status >= 300) {
-        const QString detail = status == 0 ? reply->errorString()
-                                           : (data.isEmpty() ? QStringLiteral("HTTP %1").arg(status) : QString::fromUtf8(data));
-        // the one answer that means the login itself is gone, as opposed to
-        // the network or spotify having a moment
-        const bool revoked = status == 400
-            && QJsonDocument::fromJson(data).object().value(QStringLiteral("error")).toString()
-                == QLatin1StringView("invalid_grant");
-        throw SpotifyError(revoked ? SpotifyError::Kind::LoginRevoked : SpotifyError::Kind::OAuth,
-                           QStringLiteral("Spotify token exchange failed: %1").arg(detail));
+    request.setTransferTimeout(15'000);
+    QByteArray encoded;
+    for (const auto &[key, value] : form.queryItems(QUrl::FullyDecoded)) {
+        if (!encoded.isEmpty()) encoded += '&';
+        encoded += QUrl::toPercentEncoding(key) + '=' + QUrl::toPercentEncoding(value);
     }
 
-    const QJsonObject object = QJsonDocument::fromJson(data).object();
+    const auto generation = m_generation;
+    auto *reply = boundReply(m_network->post(request, encoded), maxTokenReply, 20'000);
+    m_replies.insert(reply);
+    const auto retire = qScopeGuard([&] { m_replies.remove(reply); reply->deleteLater(); });
+    co_await qCoro(reply).waitForFinished();
+    if (generation != m_generation) {
+        throw SpotifyError(SpotifyError::Kind::OAuth, QStringLiteral("Spotify authorization was cancelled."));
+    }
+    if (replyLimit(*reply, maxTokenReply) != ReplyLimit::None) {
+        throw SpotifyError(SpotifyError::Kind::OAuth, QStringLiteral("Spotify token exchange exceeded the response limit."));
+    }
+    const int status = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+    const QJsonObject object = QJsonDocument::fromJson(reply->read(maxTokenReply + 1)).object();
+    if (status < 200 || status >= 300 || reply->error() != QNetworkReply::NoError) {
+        const bool revoked = status == 400 && object.value(QStringLiteral("error")).toString() == QLatin1StringView("invalid_grant");
+        throw SpotifyError(revoked ? SpotifyError::Kind::LoginRevoked : SpotifyError::Kind::OAuth,
+                           status == 0 ? QStringLiteral("Could not reach Spotify for authorization.")
+                                       : QStringLiteral("Spotify token exchange failed (HTTP %1).").arg(status));
+    }
+
     OAuthToken token;
     token.accessToken = object.value(QStringLiteral("access_token")).toString();
     token.refreshToken = object.value(QStringLiteral("refresh_token")).toString();
-    token.expiration = QDateTime::currentDateTimeUtc().addSecs(object.value(QStringLiteral("expires_in")).toInt());
-    if (token.accessToken.isEmpty()) {
+    const int expires = object.value(QStringLiteral("expires_in")).toInt();
+    token.expiration = QDateTime::currentDateTimeUtc().addSecs(expires);
+    if (token.accessToken.isEmpty() || expires <= 0 || token.accessToken.contains(u'\r') || token.accessToken.contains(u'\n')) {
         throw SpotifyError(SpotifyError::Kind::OAuth,
                            QStringLiteral("Spotify token exchange failed: the response had no access token."));
     }

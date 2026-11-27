@@ -19,9 +19,12 @@
 #pragma once
 
 #include "spotify/SpotifyTypes.h"
+#include "core/Async.h"
 
 #include <QByteArray>
 #include <QHash>
+#include <QDeadlineTimer>
+#include <QSet>
 #include <QJsonDocument>
 #include <QUrlQuery>
 #include <QCoroTask>
@@ -40,21 +43,22 @@ public:
     static constexpr int kMaximumCoverBytes = 256'000;
 
     explicit WebApi(QNetworkAccessManager *network);
+    void cancelRequests();
 
     QCoro::Task<Profile> profile(QString accessToken);
     QCoro::Task<QList<Playlist>> playlists(QString accessToken);
-    QCoro::Task<QList<Song>> playlistSongs(QString playlistId, QString accessToken);
+    QCoro::Task<QList<Song>> playlistSongs(QString playlistId, QString accessToken, CancelToken cancel = {});
     QCoro::Task<QList<Song>> savedSongs(QString accessToken);
     /// how many songs are saved, from one page of one: the count without the list
     QCoro::Task<int> savedSongTotal(QString accessToken);
     QCoro::Task<QList<Song>> recentlyPlayed(QString accessToken);
-    QCoro::Task<SearchResults> search(QString query, QString accessToken);
+    QCoro::Task<SearchResults> search(QString query, QString accessToken, CancelToken cancel = {});
     QCoro::Task<Song> song(QString trackId, QString accessToken);
-    QCoro::Task<Album> album(QString albumId, QString accessToken);
-    QCoro::Task<Playlist> playlist(QString playlistId, QString accessToken);
-    QCoro::Task<Artist> artist(QString artistId, QString accessToken);
-    QCoro::Task<QList<Song>> albumSongs(Album album, QString accessToken);
-    QCoro::Task<QList<Album>> artistAlbums(Artist artist, QString accessToken);
+    QCoro::Task<Album> album(QString albumId, QString accessToken, CancelToken cancel = {});
+    QCoro::Task<Playlist> playlist(QString playlistId, QString accessToken, CancelToken cancel = {});
+    QCoro::Task<Artist> artist(QString artistId, QString accessToken, CancelToken cancel = {});
+    QCoro::Task<QList<Song>> albumSongs(Album album, QString accessToken, CancelToken cancel = {});
+    QCoro::Task<QList<Album>> artistAlbums(Artist artist, QString accessToken, CancelToken cancel = {});
     /// the genres spotify gives each artist, by id, and their pictures; an
     /// artist it gives none for is still there, with an empty list
     QCoro::Task<QHash<QString, QStringList>> artistGenres(QStringList artistIds, QString accessToken,
@@ -80,22 +84,25 @@ public:
 
 private:
     QCoro::Task<QByteArray> requestData(QUrl url, QByteArray method, QString accessToken,
-                                        QByteArray body = {}, QByteArray contentType = {});
+                                        QByteArray body = {}, QByteArray contentType = {}, CancelToken cancel = {});
     QCoro::Task<QJsonDocument> requestJson(QUrl url, QByteArray method, QString accessToken,
-                                           QByteArray body = {}, QByteArray contentType = {});
+                                           QByteArray body = {}, QByteArray contentType = {}, CancelToken cancel = {});
     /// follows `next` until it runs out. a page url seen twice is an error,
     /// rather than a loop.
     QCoro::Task<> collectPages(QUrl firstUrl, QString accessToken,
-                               std::function<void(const QJsonObject &page)> onPage);
+                               std::function<void(const QJsonObject &page)> onPage, CancelToken cancel = {});
     /// every page of a list that pages by offset, the first alone for its
     /// total and the rest a few at a time, handed to `onPage` in order. a list
     /// of a thousand songs comes in the time of five pages, not twenty.
     QCoro::Task<> collectOffsetPages(QString path, QUrlQuery query, QString accessToken,
-                                     std::function<void(const QJsonObject &page)> onPage);
+                                     std::function<void(const QJsonObject &page)> onPage, CancelToken cancel = {});
     /// one page, waited for and asked again once if spotify says to slow down
-    QCoro::Task<QJsonObject> requestPage(QUrl url, QString accessToken);
+    QCoro::Task<QJsonObject> requestPage(QUrl url, QString accessToken, CancelToken cancel, QDeadlineTimer deadline);
 
     QNetworkAccessManager *m_network;
+    QSet<QNetworkReply *> m_replies;
+    QDeadlineTimer m_backoff{0};
+    quint64 m_generation = 0;
 };
 
 } // namespace swiftify

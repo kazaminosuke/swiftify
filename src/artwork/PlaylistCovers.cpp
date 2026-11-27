@@ -22,7 +22,9 @@
 
 #include <QBuffer>
 #include <QFontMetricsF>
-#include <QImageReader>
+#include "artwork/SafeImage.h"
+#include <QFile>
+#include <QFileInfo>
 #include <QLinearGradient>
 #include <QPainter>
 #include <QPainterPath>
@@ -520,16 +522,10 @@ QByteArray squareJpeg(const QImage &image, QRectF crop, int maximumBytes)
 
 QImage loadPhoto(const QString &path)
 {
-    QImageReader reader(path);
-    // the exif orientation, so a crop measured on screen means the same
-    // thing to the encoder
-    reader.setAutoTransform(true);
-    const QSize size = reader.size();
-    constexpr int kLongest = 2048;
-    if (size.isValid() && std::max(size.width(), size.height()) > kLongest) {
-        reader.setScaledSize(size.scaled(kLongest, kLongest, Qt::KeepAspectRatio));
-    }
-    return reader.read();
+    const QFileInfo info(path);
+    if (!info.isFile() || info.size() > maxImageFileBytes) return {};
+    QFile file(path);
+    return file.open(QIODevice::ReadOnly) ? readSafeImage(file, 2048) : QImage();
 }
 
 qreal displayScale(QSizeF imageSize, qreal viewport, qreal zoom)

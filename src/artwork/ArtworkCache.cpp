@@ -20,9 +20,13 @@
 
 #include "app/Paths.h"
 #include "artwork/PlaylistCovers.h"
+#include "artwork/SafeImage.h"
+#include "network/BoundedReply.h"
 
 #include <QBuffer>
+#include <QDir>
 #include <QFile>
+#include <QFileInfo>
 #include <QImageReader>
 #include <QLoggingCategory>
 #include <QNetworkAccessManager>
@@ -54,33 +58,34 @@ constexpr qint64 kDiskCacheBytes = 200LL * 1024 * 1024;
 // again (another size of it, its colours) does so within moments
 constexpr int kEncodedCacheBytes = 2 * 1024 * 1024;
 constexpr int kDecodedCacheBytes = 4 * 1024 * 1024;
+constexpr int kMaxDownloads = 4;
+constexpr int kMaxPending = 128;
+constexpr int kMaxWaiters = 32;
+constexpr qint64 kMaxRemoteBytes = 8 * 1024 * 1024;
+constexpr qint64 kMaxDecodingBytes = 64 * 1024 * 1024;
 
 QImage decode(const QByteArray &data, int pixels)
 {
     QBuffer buffer;
     buffer.setData(data);
-    QImageReader reader(&buffer);
-    reader.setAutoTransform(true);
-    const QSize size = reader.size();
-    if (size.isValid() && std::max(size.width(), size.height()) > pixels) {
-        reader.setScaledSize(size.scaled(pixels, pixels, Qt::KeepAspectRatio));
-    }
-    QImage image = reader.read();
+    const QImage image = readSafeImage(buffer, pixels);
     // the format the scene graph uploads without converting
     return image.isNull() ? image : image.convertToFormat(QImage::Format_ARGB32_Premultiplied);
 }
 
 } // namespace
 
-ArtworkCache::ArtworkCache(QNetworkAccessManager *network, QObject *parent)
+ArtworkCache::ArtworkCache(QNetworkAccessManager *network, QObject *parent, Remote remote)
     : QObject(parent)
     , m_network(network)
+    , m_remote(remote)
     , m_encoded(kEncodedCacheBytes)
     , m_decoded(kDecodedCacheBytes)
 {
     if (!s_instance) {
         s_instance = this;
     }
+    m_workers.setMaxThreadCount(2);
     auto *disk = new QNetworkDiskCache(this);
     disk->setCacheDirectory(paths::cacheDirectory() + QStringLiteral("/artwork"));
     disk->setMaximumCacheSize(kDiskCacheBytes);
@@ -89,6 +94,11 @@ ArtworkCache::ArtworkCache(QNetworkAccessManager *network, QObject *parent)
 
 ArtworkCache::~ArtworkCache()
 {
+    for (auto *reply : std::as_const(m_replies)) {
+        reply->disconnect(this);
+        reply->abort();
+        reply->deleteLater();
+    }
     if (s_instance == this) {
         s_instance = nullptr;
     }
@@ -103,12 +113,32 @@ int ArtworkCache::bucket(int pixels)
 {
     // the size ArtworkImage asks for, rounded up to 32 as it rounds it: a
     // cover is decoded at the size it is shown, give or take a few pixels
-    return std::clamp((pixels + 31) / 32 * 32, 32, 2048);
+    return (std::clamp(pixels, 1, 2048) + 31) / 32 * 32;
+}
+
+bool ArtworkCache::allowsRemote(const QUrl &url, Remote remote)
+{
+    if (!url.isValid() || url.scheme() != QLatin1StringView("https") || !url.userInfo().isEmpty()
+        || url.port(443) != 443 || url.hasFragment() || url.toEncoded().size() > 4096) return false;
+    const QString host = url.host();
+    switch (remote) {
+    case Remote::YouTube:
+        return host.endsWith(QLatin1StringView(".ytimg.com")) || host == QLatin1StringView("yt3.ggpht.com")
+            || host == QLatin1StringView("yt3.googleusercontent.com");
+    case Remote::Playback:
+        return host.endsWith(QLatin1StringView(".scdn.co")) || host.endsWith(QLatin1StringView(".spotifycdn.com"))
+            || host.endsWith(QLatin1StringView(".stats.fm"));
+    case Remote::Disabled:
+        return false;
+    }
+    return false;
 }
 
 void ArtworkCache::bytes(const QUrl &url, BytesCallback callback)
 {
-    if (!url.isValid() || url.isEmpty()) {
+    const bool local = url.isLocalFile() && url.host().isEmpty() && !url.hasQuery() && !url.hasFragment()
+        && QDir::isAbsolutePath(url.toLocalFile());
+    if (!local && !allowsRemote(url, m_remote)) {
         callback({});
         return;
     }
@@ -116,36 +146,67 @@ void ArtworkCache::bytes(const QUrl &url, BytesCallback callback)
         callback(*cached);
         return;
     }
-    auto pending = m_downloads.find(url);
-    if (pending != m_downloads.end()) {
-        pending->append(std::move(callback));
+    if (auto pending = m_downloads.find(url); pending != m_downloads.end()) {
+        if (pending->size() >= kMaxWaiters) callback({});
+        else pending->append(std::move(callback));
+        return;
+    }
+    if (m_downloads.size() >= kMaxPending) {
+        callback({});
         return;
     }
     m_downloads.insert(url, {std::move(callback)});
+    m_waiting.enqueue(url);
+    pumpDownloads();
+}
 
-    if (url.isLocalFile()) {
-        // a cover on disk, taken out of a music file of the person's own or
-        // kept beside it: read off the gui thread, never through the cache
-        QtConcurrent::run(QThreadPool::globalInstance(), [path = url.toLocalFile()] {
-            QFile file(path);
-            return file.size() < 32 * 1024 * 1024 && file.open(QIODevice::ReadOnly) ? file.readAll() : QByteArray();
-        }).then(this, [this, url](const QByteArray &data) { finishDownload(url, data); });
-        return;
+void ArtworkCache::pumpDownloads()
+{
+    while (m_active < kMaxDownloads && !m_waiting.isEmpty()) {
+        const QUrl url = m_waiting.dequeue();
+        ++m_active;
+        if (url.isLocalFile()) {
+            QtConcurrent::run(&m_workers, [path = url.toLocalFile()] {
+                const QFileInfo info(path);
+                if (!info.isFile() || info.isSymLink() || info.size() > maxImageFileBytes) return QByteArray();
+                QFile file(path);
+                if (!file.open(QIODevice::ReadOnly)) return QByteArray();
+                auto data = file.read(maxImageFileBytes + 1);
+                return data.size() <= maxImageFileBytes ? data : QByteArray();
+            }).then(this, [this, url](const QByteArray &data) { finishDownload(url, data); });
+            continue;
+        }
+
+        QNetworkRequest request(url);
+        privateRequest(request);
+        request.setAttribute(QNetworkRequest::CacheLoadControlAttribute, QNetworkRequest::PreferCache);
+        request.setAttribute(QNetworkRequest::CacheSaveControlAttribute, true);
+        request.setTransferTimeout(15'000);
+        auto *reply = boundReply(m_network->get(request), kMaxRemoteBytes, 20'000);
+        m_replies.insert(url, reply);
+        connect(reply, &QNetworkReply::finished, this, [this, url, reply] {
+            m_replies.remove(url);
+            reply->deleteLater();
+            const int status = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+            const bool usable = status >= 200 && status < 300 && reply->error() == QNetworkReply::NoError
+                && replyLimit(*reply, kMaxRemoteBytes) == ReplyLimit::None;
+            finishDownload(url, usable ? reply->read(kMaxRemoteBytes + 1) : QByteArray());
+        });
     }
+}
 
-    QNetworkRequest request(url);
-    request.setAttribute(QNetworkRequest::CacheLoadControlAttribute, QNetworkRequest::PreferCache);
-    request.setTransferTimeout(30'000);
-    QNetworkReply *reply = m_network->get(request);
-    connect(reply, &QNetworkReply::finished, this, [this, url, reply] {
-        reply->deleteLater();
-        const int status = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
-        QByteArray data = status >= 200 && status < 300 ? reply->readAll() : QByteArray();
-        // readAll grows its buffer as the reply comes in, and a cover kept
-        // as read took up to twice what the memory cache counted for it
-        data.squeeze();
-        finishDownload(url, data);
-    });
+void ArtworkCache::cancelRemote()
+{
+    QQueue<QUrl> local;
+    QList<QUrl> cancelled;
+    while (!m_waiting.isEmpty()) {
+        const auto url = m_waiting.dequeue();
+        if (url.isLocalFile()) local.enqueue(url);
+        else cancelled.append(url);
+    }
+    m_waiting = std::move(local);
+    for (const auto &url : cancelled) deliver(url, {});
+    for (auto *reply : m_replies.values()) reply->abort();
 }
 
 /// what a coroutine waits on while the callback form fetches
@@ -172,9 +233,16 @@ QCoro::Task<QByteArray> ArtworkCache::bytes(QUrl url)
 
 void ArtworkCache::finishDownload(const QUrl &url, const QByteArray &data)
 {
-    if (!data.isEmpty()) {
-        m_encoded.insert(url, new QByteArray(data), int(std::min<qsizetype>(data.size(), kEncodedCacheBytes)));
+    --m_active;
+    if (!data.isEmpty() && data.size() <= kEncodedCacheBytes) {
+        m_encoded.insert(url, new QByteArray(data), int(data.size()));
     }
+    deliver(url, data);
+    pumpDownloads();
+}
+
+void ArtworkCache::deliver(const QUrl &url, const QByteArray &data)
+{
     const QList<BytesCallback> callbacks = m_downloads.take(url);
     for (const BytesCallback &callback : callbacks) {
         callback(data);
@@ -191,7 +259,12 @@ void ArtworkCache::image(const QUrl &url, int pixels, ImageCallback callback)
     }
     auto pending = m_decodes.find(key);
     if (pending != m_decodes.end()) {
-        pending->append(std::move(callback));
+        if (pending->size() >= kMaxWaiters) callback({});
+        else pending->append(std::move(callback));
+        return;
+    }
+    if (m_decodes.size() >= kMaxPending) {
+        callback({});
         return;
     }
     m_decodes.insert(key, {std::move(callback)});
@@ -199,7 +272,7 @@ void ArtworkCache::image(const QUrl &url, int pixels, ImageCallback callback)
     if (url.scheme() == QStringLiteral("swiftify-cover")) {
         const QString identity = QUrlQuery(url).queryItemValue(QStringLiteral("key"), QUrl::FullyDecoded);
         const bool dark = url.path() == QStringLiteral("/dark");
-        QtConcurrent::run(QThreadPool::globalInstance(), covers::fallback, identity, dark, size)
+        QtConcurrent::run(&m_workers, covers::fallback, identity, dark, size)
             .then(this, [this, key](const QImage &image) {
                 m_decoded.insert(key, new QImage(image), int(image.sizeInBytes()));
                 const QList<ImageCallback> callbacks = m_decodes.take(key);
@@ -211,15 +284,18 @@ void ArtworkCache::image(const QUrl &url, int pixels, ImageCallback callback)
     }
 
     bytes(url, [this, key, size](const QByteArray &data) {
-        if (data.isEmpty()) {
+        if (data.isEmpty() || m_decodingBytes + data.size() > kMaxDecodingBytes) {
             const QList<ImageCallback> callbacks = m_decodes.take(key);
             for (const ImageCallback &callback : callbacks) {
                 callback({});
             }
             return;
         }
-        QtConcurrent::run(QThreadPool::globalInstance(), decode, data, size)
-            .then(this, [this, key](const QImage &image) {
+        const auto bytes = data.size();
+        m_decodingBytes += bytes;
+        QtConcurrent::run(&m_workers, decode, data, size)
+            .then(this, [this, key, bytes](const QImage &image) {
+                m_decodingBytes -= bytes;
                 if (!image.isNull()) {
                     m_decoded.insert(key, new QImage(image), int(std::min<qsizetype>(image.sizeInBytes(), kDecodedCacheBytes)));
                 }

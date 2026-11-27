@@ -17,6 +17,7 @@
  */
 
 #include "stats/StatsFmClient.h"
+#include "network/BoundedReply.h"
 
 #include <QJsonArray>
 #include <QJsonDocument>
@@ -122,17 +123,24 @@ QCoro::Task<QJsonValue> StatsFmClient::get(QString path, QUrlQuery query)
     QUrl url(kApiBase + path);
     url.setQuery(query);
     QNetworkRequest request(url);
+    privateRequest(request);
     request.setRawHeader("Accept", "application/json");
     request.setTransferTimeout(15'000);
 
-    std::unique_ptr<QNetworkReply> reply(m_network->get(request));
+    constexpr qint64 maxStatsBytes = 2 * 1024 * 1024;
+    const auto dispose = [](QNetworkReply *reply) { reply->deleteLater(); };
+    const std::unique_ptr<QNetworkReply, decltype(dispose)> reply(
+        boundReply(m_network->get(request), maxStatsBytes, 20'000), dispose);
     co_await qCoro(reply.get()).waitForFinished();
 
     const int status = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
-    const QByteArray data = reply->readAll();
+    if (replyLimit(*reply, maxStatsBytes) != ReplyLimit::None) {
+        throw StatsFmError(StatsFmError::Kind::Network, QStringLiteral("The stats.fm response exceeded its limit."));
+    }
+    const QByteArray data = reply->read(maxStatsBytes + 1);
     if (status == 0) {
         throw StatsFmError(StatsFmError::Kind::Network,
-                           QStringLiteral("Could not reach stats.fm: %1").arg(reply->errorString()));
+                           QStringLiteral("Could not reach stats.fm."));
     }
     if (status == 404) {
         throw StatsFmError(StatsFmError::Kind::NotFound, QStringLiteral("stats.fm has no user by that name."));
