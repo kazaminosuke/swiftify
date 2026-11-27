@@ -28,6 +28,9 @@ on:
       - tools/build-windows.ps1
       - tools/build-linux-tarball.sh
       - tools/build-macos-dmg.sh
+      - tools/install-windows-qt.py
+      - tools/qt-6.12.1-windows-msvc.sha256
+      - cmake/**
 
 permissions:
   contents: read
@@ -39,6 +42,8 @@ jobs:
     runs-on: windows-2022
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: version
         id: version
@@ -57,14 +62,13 @@ jobs:
         shell: pwsh
         run: pwsh -NoProfile -ExecutionPolicy Bypass -File ./tests/check_windows_build.ps1
 
-      # qt 6.11 and newer split the windows repository by compiler, which aqt
-      # 3.3 cannot read yet. 6.10 is the newest it can
-      - uses: jurplel/install-qt-action@a9c63c7c123f3069cff414e7e482d95dfa9d8125 # v4.4.1
-        with:
-          version: 6.10.3
-          arch: win64_msvc2022_64
-          modules: qtshadertools qtwebsockets qtnetworkauth
-          cache: true
+      - name: Install the pinned Qt MSVC kit
+        shell: pwsh
+        run: |
+          $qt = Join-Path $env:RUNNER_TEMP 'qt-6.12.1-msvc2022'
+          python tools/install-windows-qt.py $qt
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          "QT_ROOT_DIR=$qt" >> $env:GITHUB_ENV
 
       - name: build
         shell: pwsh
@@ -122,10 +126,15 @@ jobs:
           if-no-files-found: error
 
   linux:
+    strategy:
+      matrix:
+        spotify: [enabled, disabled]
     # the oldest supported runner, so the tarball runs on older distros too
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: version
         run: |
@@ -163,10 +172,10 @@ jobs:
 
       - uses: jurplel/install-qt-action@a9c63c7c123f3069cff414e7e482d95dfa9d8125 # v4.4.1
         with:
-          version: 6.12.0
+          version: 6.12.1
           arch: linux_gcc_64
           # soloist talks to spotify's soloist over websockets
-          modules: qtshadertools qtwebsockets qtnetworkauth
+          modules: qtshadertools qtwebsockets qtnetworkauth qttasktree
           cache: true
 
       # clang held to gcc 12's standard library, so it still runs on older
@@ -178,12 +187,17 @@ jobs:
           CXX: clang++-18
           CFLAGS: --gcc-install-dir=/usr/lib/gcc/x86_64-linux-gnu/12
           CXXFLAGS: --gcc-install-dir=/usr/lib/gcc/x86_64-linux-gnu/12
-        run: ./tools/build-linux-tarball.sh --qt "$QT_ROOT_DIR" --out dist --test-youtube
+        run: |
+          flags=()
+          if [[ "${{ matrix.spotify }}" == disabled ]]; then flags+=(--without-spotify); fi
+          ./tools/build-linux-tarball.sh --qt "$QT_ROOT_DIR" --out dist --test-youtube "${flags[@]}"
 
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: linux
-          path: dist/*.tar.gz
+          name: linux-${{ matrix.spotify }}
+          path: |
+            dist/*.tar.gz
+            dist/*.sha256
           if-no-files-found: error
 
   macos:
@@ -193,6 +207,8 @@ jobs:
     runs-on: xcode-27
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: version
         run: |
@@ -204,11 +220,11 @@ jobs:
 
       - uses: jurplel/install-qt-action@a9c63c7c123f3069cff414e7e482d95dfa9d8125 # v4.4.1
         with:
-          version: 6.12.0
+          version: 6.12.1
           host: mac
           target: desktop
           arch: clang_64
-          modules: qtshadertools qtwebsockets
+          modules: qtshadertools qtwebsockets qttasktree
           cache: true
 
       - name: build

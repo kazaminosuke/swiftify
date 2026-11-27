@@ -65,22 +65,22 @@ if(NOT ENABLE_SPOTIFY)
     set(SWIFTIFY_SOLOIST OFF)
 endif()
 
-find_package(Qt6 6.10 REQUIRED COMPONENTS
+find_package(Qt6 6.12.1 REQUIRED COMPONENTS
     Core Gui Network Concurrent Qml Quick QuickControls2 ShaderTools)
 if(BUILD_TESTING)
-    find_package(Qt6 6.10 REQUIRED COMPONENTS Test QuickTest)
+    find_package(Qt6 6.12.1 REQUIRED COMPONENTS Test QuickTest)
 endif()
 if(SWIFTIFY_IS_LINUX)
-    find_package(Qt6 6.10 REQUIRED COMPONENTS DBus Widgets)
+    find_package(Qt6 6.12.1 REQUIRED COMPONENTS DBus Widgets)
 else()
-    find_package(Qt6 6.10 OPTIONAL_COMPONENTS DBus)
+    find_package(Qt6 6.12.1 OPTIONAL_COMPONENTS DBus)
 endif()
 if(SWIFTIFY_DESKTOP_INTEGRATION)
     find_package(PkgConfig REQUIRED)
     pkg_check_modules(PULSE REQUIRED IMPORTED_TARGET libpulse)
 endif()
 if(SWIFTIFY_SOLOIST)
-    find_package(Qt6 6.10 REQUIRED COMPONENTS WebSockets)
+    find_package(Qt6 6.12.1 REQUIRED COMPONENTS WebSockets)
 endif()
 if(SWIFTIFY_IS_LINUX OR WIN32)
     set(SWIFTIFY_YOUTUBE_DEFAULT ON)
@@ -89,18 +89,18 @@ else()
 endif()
 option(SWIFTIFY_YOUTUBE_CLIENT "Build the YouTube client" ${SWIFTIFY_YOUTUBE_DEFAULT})
 if(SWIFTIFY_YOUTUBE_CLIENT)
-    find_package(Qt6 6.10 REQUIRED COMPONENTS NetworkAuth)
+    find_package(Qt6 6.12.1 REQUIRED COMPONENTS NetworkAuth)
 endif()
 if(ENABLE_SPOTIFY)
     find_package(Qt6Keychain REQUIRED)
 endif()
 if(WIN32)
-    find_package(Qt6 6.10 REQUIRED COMPONENTS Widgets)
+    find_package(Qt6 6.12.1 REQUIRED COMPONENTS Widgets)
 endif()
 find_package(QCoro6 0.10 REQUIRED COMPONENTS Core Network)
 qcoro_enable_coroutines()
 
-qt_standard_project_setup(REQUIRES 6.10)
+qt_standard_project_setup(REQUIRES 6.12.1)
 # modules get their own folder so tooling finds them as <dir>/Swiftify/qmldir,
 # clear of the executable (the same name on a case-insensitive disk).
 set(QT_QML_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/qml_modules)
@@ -117,9 +117,12 @@ endif()
 set(SWIFTIFY_CORE_DIR ${SWIFTIFY_CORE_DEFAULT} CACHE PATH "The Rust core, spotify-core")
 
 include(FetchContent)
+set(SWIFTIFY_CORROSION_REVISION 1499b14e4906a2890f5cee1547c8848db261753d)
+set(SWIFTIFY_QTKEYCHAIN_REVISION 875f77d9f61bd97fd84cca47ce3bc71186dfbd09)
+set(SWIFTIFY_QCORO_REVISION 98f23d8d8d67e9e24217d268927faec97c713fb0)
 FetchContent_Declare(Corrosion
     GIT_REPOSITORY https://github.com/corrosion-rs/corrosion.git
-    GIT_TAG v0.6.1)
+    GIT_TAG ${SWIFTIFY_CORROSION_REVISION})
 FetchContent_MakeAvailable(Corrosion)
 
 set(SWIFTIFY_CORE_FEATURES capi)
@@ -230,6 +233,15 @@ set(SWIFTIFY_THIRD_PARTY_LICENSES
     ${SWIFTIFY_LICENSE_DIRECTORY}/rounded-polygon-qmljs.LICENSE
     # the rust crates', made with cargo about (spotify-core/about.toml)
     ${CMAKE_CURRENT_SOURCE_DIR}/packaging/licenses/rust-crates.LICENSE)
+include(cmake/BuildProvenance.cmake)
+swiftify_record_provenance()
+list(APPEND SWIFTIFY_THIRD_PARTY_LICENSES "${SWIFTIFY_BUILD_PROVENANCE}")
+if(SWIFTIFY_BUNDLED_QT AND WIN32)
+    set(qt_kit_manifest "${Qt6_DIR}/../../../qt-6.12.1-windows-msvc.sha256")
+    if(EXISTS "${qt_kit_manifest}")
+        list(APPEND SWIFTIFY_THIRD_PARTY_LICENSES "${qt_kit_manifest}")
+    endif()
+endif()
 # material symbols, the icon font downloaded above
 if(SWIFTIFY_DOWNLOAD_ICON_FONT)
     list(APPEND SWIFTIFY_THIRD_PARTY_LICENSES ${CMAKE_CURRENT_SOURCE_DIR}/packaging/licenses/material-symbols.LICENSE)
@@ -246,8 +258,10 @@ if(SWIFTIFY_BUNDLED_QT)
     list(APPEND SWIFTIFY_THIRD_PARTY_LICENSES
         ${CMAKE_CURRENT_SOURCE_DIR}/packaging/licenses/qt.LICENSE
         ${SWIFTIFY_LICENSE_DIRECTORY}/qt.NOTICE
-        ${CMAKE_CURRENT_SOURCE_DIR}/packaging/licenses/qtkeychain.LICENSE
         ${CMAKE_CURRENT_SOURCE_DIR}/packaging/licenses/qcoro.LICENSE)
+    if(ENABLE_SPOTIFY)
+        list(APPEND SWIFTIFY_THIRD_PARTY_LICENSES ${CMAKE_CURRENT_SOURCE_DIR}/packaging/licenses/qtkeychain.LICENSE)
+    endif()
 endif()
 
 # --- the app ---------------------------------------------------------------------

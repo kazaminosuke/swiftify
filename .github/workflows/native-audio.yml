@@ -9,6 +9,7 @@ on:
       - spotify-core/Cargo.toml
       - spotify-core/Cargo.lock
       - spotify-core/src/**
+      - spotify-core/vendor/**
 
 permissions:
   contents: read
@@ -21,6 +22,8 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Linux audio build dependencies
         if: runner.os == 'Linux'
@@ -49,5 +52,8 @@ jobs:
           ALSA_CONFIG_PATH="$RUNNER_TEMP/swiftify-alsa.conf" cargo +stable test --locked --manifest-path native-audio/Cargo.toml --test device -- --ignored
           ALSA_CONFIG_PATH="$RUNNER_TEMP/swiftify-alsa.conf" cargo +stable test --locked --manifest-path spotify-core/Cargo.toml --no-default-features --features capi --lib local_clock_tracks_dsp_and_paused_async_seek -- --ignored
 
-      - name: Test the core including the C ABI and DSP
+      - name: Test the local core including the C ABI and DSP
         run: cargo +stable test --locked --manifest-path spotify-core/Cargo.toml --no-default-features --features capi --lib
+
+      - name: Test the core with Spotify including the C ABI and DSP
+        run: cargo +stable test --locked --manifest-path spotify-core/Cargo.toml --no-default-features --features capi,spotify --lib
