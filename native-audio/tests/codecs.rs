@@ -33,6 +33,26 @@ fn decodes_and_seeks_in_ogg_opus_webm_opus_and_webm_vorbis() {
     }
 }
 
+#[test]
+fn webm_uses_the_selected_track_instead_of_the_segment_length() {
+    let file = "short-default-track.webm";
+    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/audio")
+        .join(file);
+    let mut source = open_file(&path).expect(file);
+    assert_eq!(source.total_duration(), None);
+
+    let beginning = source.by_ref().take(4800).collect::<Vec<_>>();
+    assert_tone(&beginning, 440.0, file);
+    let frames = beginning.len() + source.count();
+    // Symphonia 0.6.1 does not expose Matroska DiscardPadding. The default
+    // stream can therefore contain up to one extra 20 ms Opus packet here.
+    assert!(
+        (26_640..=27_600).contains(&frames),
+        "{file}: {frames} decoded frames"
+    );
+}
+
 fn assert_tone(samples: &[f32], expected: f32, file: &str) {
     assert_eq!(samples.len(), 4800, "{file}");
     assert!(samples.iter().any(|sample| sample.abs() > 0.03), "{file}");
