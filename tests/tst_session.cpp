@@ -70,13 +70,20 @@ public:
 
     void finishNow()
     {
+        if (isFinished()) return;
         setFinished(true);
         emit metaDataChanged();
         emit readyRead();
         emit finished();
     }
 
-    void abort() override {}
+    void abort() override
+    {
+        if (isFinished()) return;
+        setError(QNetworkReply::OperationCanceledError, QStringLiteral("Cancelled"));
+        setFinished(true);
+        emit finished();
+    }
     bool isSequential() const override { return true; }
     qint64 bytesAvailable() const override { return m_body.size() - m_offset + QIODevice::bytesAvailable(); }
 
@@ -101,8 +108,6 @@ class FakeAccounts : public QNetworkAccessManager {
     Q_OBJECT
 
 public:
-    static constexpr auto kHost = "accounts.test";
-
     int expiresIn = 3600;
     /// replies wait for release() rather than coming back on their own
     bool holding = false;
@@ -144,8 +149,8 @@ protected:
             return found == api.cend() ? reply(request, 404, R"({"error":{"status":404,"message":"Not found"}})")
                                        : reply(request, 200, *found);
         }
-        if (request.url().host() != QLatin1StringView(kHost)) {
-            return QNetworkAccessManager::createRequest(operation, request, data);
+        if (operation != PostOperation || request.url() != QUrl(QStringLiteral("https://accounts.spotify.com/api/token"))) {
+            return reply(request, 404, {});
         }
         ++requests;
         const QUrlQuery form(QString::fromUtf8(data ? data->readAll() : QByteArray()));
@@ -287,7 +292,6 @@ private:
 
         Rig()
         {
-            OAuthFlow::setTokenEndpoint(QUrl(QStringLiteral("http://%1/api/token").arg(FakeAccounts::kHost)));
             session.setBackgroundOpener([this](const QUrl &url) { opened << url; });
         }
 
@@ -1018,7 +1022,7 @@ private slots:
         rig.library.setSearchQuery(link);
 
         // Then
-        QTRY_COMPARE(rig.errors.message(), QStringLiteral("Spotify API request failed: Not found"));
+        QTRY_COMPARE(rig.errors.message(), QStringLiteral("Spotify API request failed: HTTP 404"));
         QCOMPARE(rig.library.page(), LibraryStore::Page::Search);
         QVERIFY(!rig.library.isSearching());
         QCOMPARE(rig.library.searchQuery(), link);

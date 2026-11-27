@@ -26,6 +26,7 @@
 #include "playback/PlaybackController.h"
 #include "playback/PlaybackState.h"
 #include "spotify/CredentialStore.h"
+#include "spotify/SpotifyError.h"
 #include "spotify/SpotifySession.h"
 #if defined(SWIFTIFY_HAS_DBUS) && defined(Q_OS_LINUX)
 #include "system/dbus/Mpris.h"
@@ -117,21 +118,25 @@ private slots:
     {
         RustCore core;
         const auto original = core.generation();
-        int finished = 0;
+        int failed = 0;
+        int cancelled = 0;
         const auto request = [&]() -> QCoro::Task<> {
             try {
                 co_await core.lyricsJson(QStringLiteral("spotify:track:0000000000000000000000"));
+            } catch (const Cancelled &) {
+                ++cancelled;
             } catch (const std::exception &) {
                 core.reset();
-                ++finished;
+                ++failed;
             }
         };
         detach(request());
-        QTRY_COMPARE(finished, 1);
+        QTRY_COMPARE(failed, 1);
         QCOMPARE(core.generation(), original + 1);
         detach(request());
         core.reset();
-        QTRY_COMPARE(finished, 2);
+        QTRY_COMPARE(cancelled, 1);
+        QCOMPARE(failed, 1);
         QCOMPARE(core.generation(), original + 2);
     }
 
