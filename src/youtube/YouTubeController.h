@@ -4,7 +4,9 @@
 #include "youtube/GoogleAuthorization.h"
 #include "youtube/YouTubeApi.h"
 
+#include <QDeadlineTimer>
 #include <QNetworkAccessManager>
+#include <QSet>
 #include <QStandardItemModel>
 #include <QtQml/qqmlregistration.h>
 
@@ -37,7 +39,8 @@ public:
     Q_PROPERTY(bool signingIn READ signingIn NOTIFY accountChanged FINAL)
     Q_PROPERTY(QString accountError READ accountError NOTIFY accountChanged FINAL)
 
-    explicit YouTubeController(QObject *parent = nullptr);
+    explicit YouTubeController(QObject *parent = nullptr, QNetworkAccessManager *catalogueNetwork = nullptr,
+                               QNetworkAccessManager *authorizationNetwork = nullptr);
 
     View view() const { return m_view; }
     SearchKind searchKind() const { return m_searchKind; }
@@ -46,12 +49,12 @@ public:
     QAbstractItemModel *results() { return &m_results; }
     bool loading() const { return m_reply != nullptr; }
     bool searched() const { return m_searched; }
-    bool hasMore() const { return !m_nextPage.isEmpty(); }
+    bool hasMore() const { return !m_nextPage.isEmpty() && m_pages < maxPages; }
     QString error() const { return m_error; }
     bool oauthConfigured() const { return m_authorization.configured(); }
-    bool canSearch() const { return !m_channelName.isEmpty() || !m_apiKey.isEmpty(); }
+    bool canSearch() const { return !m_apiKey.isEmpty(); }
     QString channelName() const { return m_channelName; }
-    bool signedIn() const { return !m_authorization.accessToken().isEmpty(); }
+    bool signedIn() const { return m_authorization.signedIn(); }
     bool accountBusy() const { return m_authorization.busy(); }
     bool signingIn() const { return m_authorization.signingIn(); }
     QString accountError() const { return m_channelError.isEmpty() ? m_authorization.error() : m_channelError; }
@@ -68,16 +71,24 @@ public:
     Q_INVOKABLE void openYouTubeTerms();
     Q_INVOKABLE void openGooglePrivacy();
     Q_INVOKABLE void openGoogleConnections();
-    Q_INVOKABLE void signIn() { m_authorization.signIn(); }
+    Q_INVOKABLE void signIn();
     Q_INVOKABLE void retryChannel();
     Q_INVOKABLE void cancelSignIn() { m_authorization.cancelSignIn(); }
-    Q_INVOKABLE void signOut() { m_authorization.disconnectAccount(); }
+    Q_INVOKABLE void signOut();
 
 signals:
     void pageChanged();
     void accountChanged();
 
 private:
+    enum class Credential { Public, Account };
+    static constexpr int maxPages = 40;
+    Credential credential() const;
+    QString blocked(Credential credential) const;
+    QByteArray accountToken(QString &error);
+    void stopPage();
+    void stopChannel();
+    void enforceFailure(const Page &page, Credential credential);
     void reset(View view);
     void fetch(bool more);
     void loadChannel();
@@ -101,6 +112,12 @@ private:
     QString m_value;
     QString m_playlistTitle;
     QString m_nextPage;
+    QSet<QString> m_seenPages;
+    int m_pages = 0;
+    QDeadlineTimer m_pauseUntil{0};
+    QString m_pauseReason;
+    QString m_publicBlock;
+    QString m_accountBlock;
     QString m_error;
     bool m_searched = false;
     bool m_retryMore = false;
