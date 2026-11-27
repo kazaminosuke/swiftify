@@ -44,6 +44,7 @@ namespace swiftify {
 
 class ErrorCenter;
 class PlaybackCore;
+struct OAuthToken;
 
 /// a token refresh other callers can wait on, so only one runs per login
 class TokenRefresh : public QObject {
