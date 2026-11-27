@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "youtube/YouTubeApi.h"
+#include "network/BoundedReply.h"
 
 #include <QBuffer>
 #include <QNetworkAccessManager>
@@ -61,6 +62,8 @@ private slots:
     void emptyMusicPageRetainsPagination();
     void playlistItemsUseVideoIdAndOwner();
     void reportsQuotaWithoutEchoingResponse();
+    void rejectsOversizedResponse();
+    void understandsRetryAfterDatesAndSeconds();
     void rejectsInvalidCollectionIds();
     void searchTypesHaveSeparateIdsAndFilters();
 };
@@ -191,6 +194,26 @@ void YouTubeApiTest::reportsQuotaWithoutEchoingResponse()
     QCOMPARE(page.status, 403);
     QVERIFY(page.error.contains(QStringLiteral("quota")));
     QVERIFY(!page.error.contains(QStringLiteral("private debug data")));
+}
+
+void YouTubeApiTest::rejectsOversizedResponse()
+{
+    Network network;
+    network.body = QByteArray(2 * 1024 * 1024 + 1, ' ');
+    const Api api(network);
+    const std::unique_ptr<QNetworkReply> reply(api.fetch(Collection::Search, {}, {}, {}, "test-key"));
+    const auto result = Api::read(*reply, Collection::Search);
+    QVERIFY(result.items.isEmpty());
+    QVERIFY(result.error.contains(QStringLiteral("too large")));
+}
+
+void YouTubeApiTest::understandsRetryAfterDatesAndSeconds()
+{
+    using swiftify::retryAfterMs;
+    const QDateTime now = QDateTime::fromString(QStringLiteral("2026-11-27T12:00:00Z"), Qt::ISODate);
+    QCOMPARE(retryAfterMs("9", now).value_or(-1), 9000);
+    QCOMPARE(retryAfterMs("Fri, 27 Nov 2026 12:02:00 GMT", now).value_or(-1), 120000);
+    QVERIFY(!retryAfterMs("could not parse", now).has_value());
 }
 
 void YouTubeApiTest::rejectsInvalidCollectionIds()

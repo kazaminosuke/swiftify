@@ -337,16 +337,39 @@ private:
 private slots:
     void disabledSessionLeavesSavedCredentialsUntouched()
     {
+        class CountingStore : public MemoryCredentialStore {
+        public:
+            QCoro::Task<std::optional<StoredCredentials>> load(Account account) override
+            {
+                ++loads;
+                return MemoryCredentialStore::load(account);
+            }
+            int loads = 0;
+        };
+
+        class MockNetwork : public QNetworkAccessManager {
+        public:
+            int requests = 0;
+
+        protected:
+            QNetworkReply *createRequest(Operation operation, const QNetworkRequest &, QIODevice *) override
+            {
+                ++requests;
+                return QNetworkAccessManager::createRequest(operation, QNetworkRequest(QUrl(QStringLiteral("data:,"))));
+            }
+        };
+
         FakeCore core;
-        MemoryCredentialStore credentials;
-        QNetworkAccessManager network;
+        CountingStore credentials;
+        MockNetwork network;
         ErrorCenter errors(nullptr);
-        int replies = 0;
-        connect(&network, &QNetworkAccessManager::finished, this, [&](QNetworkReply *) { ++replies; });
+        const auto expires = QDateTime::currentDateTimeUtc().addSecs(1800);
         credentials.items.insert(CredentialStore::Account::Playback,
-            {QStringLiteral("example-client"), QStringLiteral("example-refresh")});
+            {QStringLiteral("example-client"), QStringLiteral("example-refresh"),
+             OAuthFlow::kPlaybackAuthorizationVersion, {}, QStringLiteral("example-access"), expires});
         credentials.items.insert(CredentialStore::Account::Library,
-            {QStringLiteral("example-client"), QStringLiteral("example-refresh")});
+            {QStringLiteral("example-client"), QStringLiteral("example-refresh"),
+             OAuthFlow::kLibraryAuthorizationVersion, {}, QStringLiteral("example-access"), expires});
 
         SpotifySession session(&core, &credentials, &network, &errors, nullptr, false);
         session.restoreSavedSessions();
@@ -358,7 +381,8 @@ private slots:
         QVERIFY(!session.isConnected());
         QVERIFY(!session.hasLibraryToken());
         QVERIFY(core.pending.isEmpty());
-        QCOMPARE(replies, 0);
+        QCOMPARE(credentials.loads, 0);
+        QCOMPARE(network.requests, 0);
         QCOMPARE(credentials.items.size(), 2);
     }
 
