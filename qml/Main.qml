@@ -362,7 +362,6 @@ ApplicationWindow {
                 anchors.bottom: parent.bottom
                 anchors.bottomMargin: 12
                 width: Math.max(0, Math.min(720, sheet.width - 36))
-                Reveal.shown: !UiState.needsSetup
                 onImmersiveRequested: UiState.immersiveOpen = true
             }
         }
@@ -373,7 +372,7 @@ ApplicationWindow {
             id: inspector
             objectName: "mainInspector"
             readonly property bool shown: (Player.showingLyrics || Player.showingQueue) && !UiState.immersiveOpen
-                                          && !UiState.needsSetup && window.rightPanelFits
+                                          && window.rightPanelFits
             anchors.right: parent.right
             anchors.rightMargin: shown ? 8 : 0
             anchors.top: parent.top
@@ -415,7 +414,6 @@ ApplicationWindow {
         DropArea {
             id: musicDrop
             anchors.fill: parent
-            enabled: Session.libraryConnected
             onEntered: (drag) => drag.accepted = drag.hasUrls
             onDropped: (drop) => {
                 if (!drop.hasUrls) {
@@ -865,9 +863,9 @@ ApplicationWindow {
     Shortcut { sequence: "Ctrl+Left"; enabled: !App.macOS; onActivated: Player.skipBackward() }
     Shortcut { sequence: "Ctrl+Alt+Right"; enabled: !App.macOS; onActivated: Player.seekBy(10000) }
     Shortcut { sequence: "Ctrl+Alt+Left"; enabled: !App.macOS; onActivated: Player.seekBy(-10000) }
-    Shortcut { sequence: "Ctrl+Up"; enabled: !App.macOS && Session.connected; onActivated: Player.adjustVolume(0.05) }
-    Shortcut { sequence: "Ctrl+Down"; enabled: !App.macOS && Session.connected; onActivated: Player.adjustVolume(-0.05) }
-    Shortcut { sequence: "Ctrl+Alt+M"; enabled: !App.macOS && Session.connected; onActivated: Player.toggleMute() }
+    Shortcut { sequence: "Ctrl+Up"; enabled: !App.macOS; onActivated: Player.adjustVolume(0.05) }
+    Shortcut { sequence: "Ctrl+Down"; enabled: !App.macOS; onActivated: Player.adjustVolume(-0.05) }
+    Shortcut { sequence: "Ctrl+Alt+M"; enabled: !App.macOS; onActivated: Player.toggleMute() }
     Shortcut { sequence: "Ctrl+Alt+S"; enabled: !App.macOS && Player.hasSong; onActivated: Player.toggleShuffle() }
     Shortcut { sequence: "Ctrl+Alt+R"; enabled: !App.macOS && Player.hasSong; onActivated: Player.cycleRepeatMode() }
     Shortcut { sequence: "Ctrl+Alt+G"; onActivated: UiState.showCatchphrase("test") }

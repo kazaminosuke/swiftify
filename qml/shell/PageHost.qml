@@ -39,7 +39,7 @@ Item {
     readonly property Item currentPage: slots.length > 0 ? slots[slots.length - 1].view : null
 
     function componentFor(page: int): Component {
-        if (UiState.needsSetup) {
+        if (page === Library.Page.Home && UiState.needsSetup) {
             return setupPage
         }
         switch (page) {

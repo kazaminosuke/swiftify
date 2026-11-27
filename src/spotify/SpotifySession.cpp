@@ -40,6 +40,7 @@ namespace {
 SpotifySession *s_instance = nullptr;
 }
 
+#ifdef SWIFTIFY_HAS_SPOTIFY
 const QStringList SpotifySession::kLibraryScopes {
     QStringLiteral("playlist-read-private"),
     QStringLiteral("playlist-read-collaborative"),
@@ -51,19 +52,27 @@ const QStringList SpotifySession::kLibraryScopes {
     QStringLiteral("user-library-modify"),
     QStringLiteral("ugc-image-upload"),
 };
+#endif
 
 SpotifySession::SpotifySession(PlaybackCore *core, CredentialStore *credentials, QNetworkAccessManager *network,
-                               ErrorCenter *errors, QObject *parent)
+                               ErrorCenter *errors, QObject *parent, bool enabled)
     : QObject(parent)
     , m_core(core)
     , m_credentials(credentials)
     , m_errors(errors)
+#ifdef SWIFTIFY_HAS_SPOTIFY
+    , m_enabled(enabled)
     , m_oauth(network)
+#else
+    , m_enabled(false)
+#endif
     , m_webApi(network)
 {
     if (!s_instance) {
         s_instance = this;
     }
+#ifdef SWIFTIFY_HAS_SPOTIFY
+    if (!m_enabled) return;
     connect(&m_oauth, &OAuthFlow::callbackReceived, this, [this](const QUrl &url) { detach(completeLogin(url)); });
 
     // long enough for a browser to start from cold in the background (half
@@ -85,6 +94,9 @@ SpotifySession::SpotifySession(PlaybackCore *core, CredentialStore *credentials,
     if (QCoreApplication *application = QCoreApplication::instance()) {
         connect(application, &QCoreApplication::aboutToQuit, this, &SpotifySession::flushCredentialSaves);
     }
+#else
+    Q_UNUSED(enabled);
+#endif
 }
 
 SpotifySession::~SpotifySession()
@@ -105,6 +117,15 @@ SpotifySession *SpotifySession::create(QQmlEngine *, QJSEngine *)
     return s_instance;
 }
 
+QString SpotifySession::redirectUri() const
+{
+#ifdef SWIFTIFY_HAS_SPOTIFY
+    if (m_enabled) return OAuthFlow::redirectUri().toString();
+#endif
+    return {};
+}
+
+#ifdef SWIFTIFY_HAS_SPOTIFY
 void SpotifySession::reportError(const QString &message)
 {
     m_reportedError = message;
@@ -120,6 +141,8 @@ void SpotifySession::clearReportedError()
     }
     m_reportedError.clear();
 }
+
+#endif
 
 void SpotifySession::setStatus(const QString &status)
 {
@@ -137,6 +160,7 @@ void SpotifySession::setLibraryStatus(const QString &status)
     }
 }
 
+#ifdef SWIFTIFY_HAS_SPOTIFY
 void SpotifySession::setConnected(bool connected)
 {
     if (m_connected != connected) {
@@ -164,6 +188,7 @@ void SpotifySession::setEvaluatingStoredLogin(bool evaluating)
 
 void SpotifySession::setLibraryClientId(const QString &clientId)
 {
+    if (!m_enabled) return;
     if (m_libraryClientId != clientId) {
         m_libraryClientId = clientId;
         emit libraryClientIdChanged();
@@ -186,6 +211,7 @@ QString SpotifySession::loginClientId(LoginPurpose purpose) const
 
 void SpotifySession::restoreSavedSessions()
 {
+    if (!m_enabled) return;
     detach(restore());
 }
 
@@ -343,6 +369,7 @@ void SpotifySession::beginLibraryLogin()
 
 void SpotifySession::beginLogin(LoginPurpose purpose, const QStringList &scopes, const QString &clientId)
 {
+    if (!m_enabled) return;
     // the person's own login takes the place of one signing itself in again;
     // the other kind's, if it was that, goes after
     if (m_repairing) {
@@ -484,6 +511,7 @@ void SpotifySession::cancelLogin()
 
 void SpotifySession::logOut()
 {
+    if (!m_enabled) return;
     detach(logOutAsync());
 }
 
@@ -663,6 +691,7 @@ QCoro::Task<QString> SpotifySession::playbackAccessToken(bool fresh)
 
 QCoro::Task<> SpotifySession::ensureFreshPlaybackConnection(bool force)
 {
+    if (!m_enabled) throw SpotifyError(SpotifyError::Kind::Session, QStringLiteral("Spotify support is disabled."));
     force = force || m_playbackConnectionIsSuspect;
     // a librespot session can die while its login is still good: a dropped
     // connection, a long sleep, a server-side disconnect. one that lives on
@@ -901,5 +930,23 @@ void SpotifySession::repairTimedOut()
         setEvaluatingStoredLogin(false);
     }
 }
+
+#else
+
+void SpotifySession::setLibraryClientId(const QString &) {}
+void SpotifySession::beginPlaybackLogin() {}
+void SpotifySession::beginLibraryLogin() {}
+void SpotifySession::reopenLoginPage() {}
+void SpotifySession::cancelLogin() {}
+void SpotifySession::logOut() {}
+void SpotifySession::restoreSavedSessions() {}
+void SpotifySession::flushCredentialSaves() {}
+
+QCoro::Task<> SpotifySession::ensureFreshPlaybackConnection(bool)
+{
+    throw SpotifyError(SpotifyError::Kind::Session, QStringLiteral("Spotify support is disabled."));
+}
+
+#endif
 
 } // namespace swiftify

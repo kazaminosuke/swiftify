@@ -105,6 +105,7 @@ T.Popup {
                         required property int index
                         readonly property bool selected: root.page === index
 
+                        visible: destination.index !== 6 || Session.enabled
                         width: rail.width
                         implicitHeight: 64
                         padding: 0

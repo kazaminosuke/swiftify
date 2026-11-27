@@ -253,6 +253,7 @@ Item {
                 symbol: "high_quality"
 
                 ConfigSelection {
+                    visible: Session.enabled
                     text: qsTr("Streaming")
                     currentIndex: Math.max(0, root.qualities.indexOf(Settings.streamingQuality))
                     segments: [
@@ -263,6 +264,7 @@ Item {
                     onActivated: (index) => Settings.streamingQuality = root.qualities[index]
                 }
                 ConfigSelection {
+                    visible: Session.enabled
                     text: qsTr("Song cache")
                     currentIndex: Math.max(0, root.cacheSizes.indexOf(Settings.songCacheMegabytes))
                     segments: [
@@ -278,6 +280,7 @@ Item {
                     onToggledTo: (checked) => Settings.normalizeVolume = checked
                 }
                 NoteText {
+                    visible: Session.enabled
                     text: qsTr("both cache and quality apply the next time playback connects")
                 }
             }
@@ -567,7 +570,7 @@ Item {
         // the logins: who is signed in, the library's and playback's state,
         // connecting them again, and logging out
         Page {
-            visible: root.page === 6
+            visible: root.page === 6 && Session.enabled
 
             ContentSection {
                 title: qsTr("Account")

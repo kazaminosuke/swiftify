@@ -145,16 +145,31 @@ PlaybackController::~PlaybackController()
     }
 }
 
+QString PlaybackController::playbackStateKey() const
+{
+    return m_session->isEnabled() ? kPlaybackStateKey : QStringLiteral("localPlaybackStateV1");
+}
+
 void PlaybackController::restorePlaybackState()
 {
-    const auto state = playbackstate::decode(m_settings->value(kPlaybackStateKey).toByteArray());
+    auto serialized = m_settings->value(playbackStateKey());
+    if (!serialized.isValid() && !m_session->isEnabled()) serialized = m_settings->value(kPlaybackStateKey);
+    const auto state = playbackstate::decode(serialized.toByteArray());
     if (!state) return;
+    const Song &current = state->queue.at(state->currentIndex);
+    if (!m_session->isEnabled() && !current.isLocalFile()) return;
     m_queue = state->queue;
     m_shuffledQueue = state->shuffled;
     m_history = state->history;
+    if (!m_session->isEnabled()) {
+        const auto remote = [](const Song &song) { return !song.isLocalFile(); };
+        m_queue.removeIf(remote);
+        m_shuffledQueue.removeIf(remote);
+        m_history.removeIf(remote);
+    }
     m_shuffle = state->shuffle;
     m_repeatMode = RepeatMode(state->repeat);
-    m_currentSong = m_queue.at(state->currentIndex);
+    m_currentSong = current;
     m_livePositionMs = m_publishedPositionMs = state->positionMs;
     m_durationMs = state->durationMs;
     m_resumePositionMs = state->positionMs;
@@ -173,8 +188,8 @@ void PlaybackController::schedulePlaybackSave()
 void PlaybackController::savePlaybackState()
 {
     if (!m_currentSong) {
-        if (m_settings->contains(kPlaybackStateKey)) {
-            m_settings->remove(kPlaybackStateKey);
+        if (m_settings->contains(playbackStateKey())) {
+            m_settings->remove(playbackStateKey());
             m_settings->sync();
         }
         return;
@@ -182,8 +197,8 @@ void PlaybackController::savePlaybackState()
     const QByteArray state = playbackstate::encode(m_queue, m_shuffledQueue, m_history, *m_currentSong,
         m_livePositionMs, m_durationMs, m_shuffle, int(m_repeatMode));
     // Debug loading tests and unsupported URIs must not replace a real song.
-    if (state.isEmpty() || state == m_settings->value(kPlaybackStateKey).toByteArray()) return;
-    m_settings->setValue(kPlaybackStateKey, state);
+    if (state.isEmpty() || state == m_settings->value(playbackStateKey()).toByteArray()) return;
+    m_settings->setValue(playbackStateKey(), state);
     m_settings->sync();
 }
 
@@ -1617,7 +1632,7 @@ void PlaybackController::reset()
 {
     m_saveTimer.stop();
     m_checkpointTimer.stop();
-    m_settings->remove(kPlaybackStateKey);
+    m_settings->remove(playbackStateKey());
     m_settings->sync();
     m_remote = false;
     m_playbackRequest.cancel();

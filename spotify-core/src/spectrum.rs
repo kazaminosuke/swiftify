@@ -17,7 +17,6 @@
  */
 
 use std::{
-    collections::VecDeque,
     f32::consts::TAU,
     sync::{
         Arc, Mutex,
@@ -25,23 +24,29 @@ use std::{
         mpsc::{SyncSender, sync_channel},
     },
     thread,
-    time::{Duration, Instant},
 };
 
+#[cfg(feature = "spotify")]
+use std::{collections::VecDeque, time::{Duration, Instant}};
+#[cfg(feature = "spotify")]
 use librespot::playback::{
-    NUM_CHANNELS, SAMPLE_RATE,
     audio_backend::{Sink, SinkError, SinkResult},
     convert::Converter,
     decoder::AudioPacket,
     mixer::VolumeGetter,
 };
+#[cfg(feature = "spotify")]
 use rodio::cpal::{self, traits::StreamTrait};
 use rustfft::{Fft, FftPlanner, num_complex::Complex};
 
+#[cfg(feature = "spotify")]
 use crate::{
     dsp::{DspProcessor, SharedDsp},
     output::open_stereo_stream,
 };
+
+pub(crate) const SAMPLE_RATE: u32 = 44_100;
+pub(crate) const NUM_CHANNELS: usize = 2;
 
 pub(crate) const BAND_COUNT: usize = 48;
 
@@ -53,7 +58,7 @@ const BASS_FFT_SIZE: usize = MAIN_FFT_SIZE * 2;
 // 44.1 khz. core animation interpolates these targets, so running the two cava
 // ffts more often would spend cpu on frames the ui does not directly present.
 const HOP_SIZE: usize = 1_024;
-pub(crate) const ANALYSIS_SAMPLE_COUNT: usize = HOP_SIZE * NUM_CHANNELS as usize;
+pub(crate) const ANALYSIS_SAMPLE_COUNT: usize = HOP_SIZE * NUM_CHANNELS;
 const MIN_FREQUENCY_HZ: f32 = 40.0;
 const MAX_FREQUENCY_HZ: f32 = 16_000.0;
 const BASS_CUTOFF_HZ: f32 = 100.0;
@@ -233,6 +238,7 @@ impl OutputHealth {
 /// a live connection to the default output device. held as an option so a
 /// device that cannot be opened is an error the player can report, rather than
 /// a panic on the thread librespot builds its sink on.
+#[cfg(feature = "spotify")]
 struct Output {
     queue: Arc<PlayQueue>,
     stream: cpal::Stream,
@@ -249,11 +255,13 @@ struct Output {
 /// convert, pausing, stopping, skipping), and that walk cost as much as the
 /// whole interface thread while music played. it also kept the device
 /// running on silence while paused; this stream is stopped instead.
+#[cfg(feature = "spotify")]
 #[derive(Default)]
 pub(crate) struct PlayQueue {
     state: Mutex<QueueState>,
 }
 
+#[cfg(feature = "spotify")]
 struct QueueState {
     chunks: VecDeque<PlayedChunk>,
     /// the analysis window being filled, carried from chunk to chunk as the
@@ -264,6 +272,7 @@ struct QueueState {
     spent: Vec<PlayedChunk>,
 }
 
+#[cfg(feature = "spotify")]
 impl Default for QueueState {
     fn default() -> Self {
         Self {
@@ -274,6 +283,7 @@ impl Default for QueueState {
     }
 }
 
+#[cfg(feature = "spotify")]
 impl PlayQueue {
     fn state(&self) -> std::sync::MutexGuard<'_, QueueState> {
         self.state
@@ -334,6 +344,7 @@ impl PlayQueue {
 }
 
 /// a packet as the device plays it
+#[cfg(feature = "spotify")]
 pub(crate) enum PlayedChunk {
     Plain {
         samples: Vec<f32>,
@@ -343,6 +354,7 @@ pub(crate) enum PlayedChunk {
     Analyzed(Box<AnalyzedSource>),
 }
 
+#[cfg(feature = "spotify")]
 impl PlayedChunk {
     /// copies as much of what is left of it as fits; how many samples
     fn fill(&mut self, out: &mut [f32], window: &mut AnalysisWindow) -> usize {
@@ -379,12 +391,12 @@ pub(crate) struct RateConverter {
     /// the next packet; from -1, between the last packet's final frame and
     /// the next one's first
     position: f64,
-    previous: [f32; NUM_CHANNELS as usize],
+    previous: [f32; NUM_CHANNELS],
     primed: bool,
 }
 
 impl RateConverter {
-    const CHANNELS: usize = NUM_CHANNELS as usize;
+    const CHANNELS: usize = NUM_CHANNELS;
 
     fn new(to: u32) -> Self {
         Self::from_rates(SAMPLE_RATE, to)
@@ -395,7 +407,7 @@ impl RateConverter {
             to,
             step: f64::from(from) / f64::from(to),
             position: 0.0,
-            previous: [0.0; NUM_CHANNELS as usize],
+            previous: [0.0; NUM_CHANNELS],
             primed: false,
         }
     }
@@ -447,6 +459,7 @@ impl RateConverter {
     }
 }
 
+#[cfg(feature = "spotify")]
 pub(crate) struct SpectrumSink {
     output: Option<Output>,
     spectrum: SharedSpectrum,
@@ -458,6 +471,7 @@ pub(crate) struct SpectrumSink {
     spent: Vec<PlayedChunk>,
 }
 
+#[cfg(feature = "spotify")]
 impl SpectrumSink {
     pub(crate) fn new(
         spectrum: SharedSpectrum,
@@ -477,6 +491,7 @@ impl SpectrumSink {
     }
 }
 
+#[cfg(feature = "spotify")]
 impl SpectrumSink {
     /// limits how long a stopped output can block playback
     const DRAIN_TIMEOUT: Duration = Duration::from_secs(2);
@@ -541,6 +556,7 @@ impl SpectrumSink {
 /// hundred milliseconds ahead of the device. a busy interface could hold it
 /// up long enough to run that lead dry, so it asks to be scheduled like the
 /// interface itself, once, from the thread it runs on.
+#[cfg(feature = "spotify")]
 fn raise_decoder_priority() {
     thread_local! {
         static RAISED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
@@ -561,6 +577,7 @@ fn raise_decoder_priority() {
     }
 }
 
+#[cfg(feature = "spotify")]
 impl Sink for SpectrumSink {
     fn start(&mut self) -> SinkResult<()> {
         raise_decoder_priority();
@@ -664,6 +681,7 @@ struct AnalysisChunk {
     sequence: u64,
 }
 
+#[cfg(feature = "spotify")]
 pub(crate) struct AnalyzedSource {
     /// what the device plays
     played: Vec<f32>,
@@ -678,6 +696,7 @@ pub(crate) struct AnalyzedSource {
     finished: bool,
 }
 
+#[cfg(feature = "spotify")]
 struct DecodedChunk {
     samples: Vec<f32>,
     /// samples handed to the analysis so far
@@ -741,6 +760,7 @@ impl AnalysisWindow {
     }
 }
 
+#[cfg(feature = "spotify")]
 impl AnalyzedSource {
     /// a chunk played at the decoder's own rate
     #[cfg(test)]
@@ -779,11 +799,12 @@ impl AnalyzedSource {
     }
 }
 
+#[cfg(feature = "spotify")]
 impl AnalyzedSource {
     /// copies as much of what is left to play as fits into `out`, and hands
     /// the analysis what it covers; how many samples
     fn fill(&mut self, out: &mut [f32], window: &mut AnalysisWindow) -> usize {
-        const CHANNELS: usize = NUM_CHANNELS as usize;
+        const CHANNELS: usize = NUM_CHANNELS;
         window.follow(&self.spectrum);
         let start = self.position;
         let count = out.len().min(self.played.len() - start);
@@ -903,7 +924,7 @@ impl SpectrumAnalyzer {
         let inverse_output_gain = inverse_output_gain(output_gain);
 
         for (chunk_index, chunk) in samples.chunks(ANALYSIS_SAMPLE_COUNT).enumerate() {
-            let frame_count = (chunk.len() / NUM_CHANNELS as usize).min(BASS_FFT_SIZE);
+            let frame_count = (chunk.len() / NUM_CHANNELS).min(BASS_FFT_SIZE);
             if frame_count == 0 {
                 continue;
             }
@@ -918,7 +939,7 @@ impl SpectrumAnalyzer {
             );
             self.shift_input(elapsed_frames);
             for (index, frame) in chunk
-                .as_chunks::<{ NUM_CHANNELS as usize }>()
+                .as_chunks::<{ NUM_CHANNELS }>()
                 .0
                 .iter()
                 .take(frame_count)
@@ -1145,10 +1166,12 @@ fn logarithmic_band_ranges() -> [BandRange; BAND_COUNT] {
 #[cfg(test)]
 mod tests {
     use super::{
-        ANALYSIS_SAMPLE_COUNT, AnalyzedSource, BAND_COUNT, BASS_FFT_SIZE, FftResolution, HOP_SIZE,
-        MAIN_FFT_SIZE, NUM_CHANNELS, Ordering, PlayQueue, PlayedChunk, RateConverter, SAMPLE_RATE,
-        SharedSpectrum, SpectrumAnalyzer, SpectrumSink,
+        ANALYSIS_SAMPLE_COUNT, BAND_COUNT, BASS_FFT_SIZE, FftResolution, HOP_SIZE, MAIN_FFT_SIZE,
+        NUM_CHANNELS, Ordering, RateConverter, SAMPLE_RATE, SharedSpectrum, SpectrumAnalyzer,
     };
+
+    #[cfg(feature = "spotify")]
+    use super::{AnalyzedSource, PlayQueue, PlayedChunk, SpectrumSink};
 
     fn band_for_frequency(analyzer: &SpectrumAnalyzer, frequency: f32) -> usize {
         analyzer
@@ -1166,6 +1189,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "spotify")]
     fn spotify_device_callback_does_not_wait_for_its_writer() {
         let queue = PlayQueue::default();
         let _writer = queue.state();
@@ -1206,6 +1230,7 @@ mod tests {
     /// the time stretcher hands the sink chunks shorter than one analysis window above 1x
     /// speed.
     #[test]
+    #[cfg(feature = "spotify")]
     fn analysis_windows_span_chunks_too_short_to_hold_one() {
         let spectrum = SharedSpectrum::new();
         spectrum.set_enabled(true);
@@ -1667,6 +1692,7 @@ mod tests {
     /// how many analysis windows reach the worker when sources are built the
     /// way the sink builds them: up to a queue's worth ahead of playback, then
     /// played and dropped in order.
+    #[cfg(feature = "spotify")]
     fn windows_queued_through_a_sink_queue(packet_samples: &[usize]) -> u64 {
         let spectrum = SharedSpectrum::new();
         spectrum.set_enabled(true);
@@ -1696,8 +1722,9 @@ mod tests {
     /// vorbis decodes a transient as a run of short blocks: 128-frame packets,
     /// a quarter of the 1024-frame packets around them.
     #[test]
+    #[cfg(feature = "spotify")]
     fn short_packets_queued_ahead_still_fill_analysis_windows() {
-        let frames = |count: usize| count * NUM_CHANNELS as usize;
+        let frames = |count: usize| count * NUM_CHANNELS;
         // a long run of short blocks, then drums: long blocks broken by
         // transients, each entered and left through a 576-frame packet.
         let short_run = vec![frames(128); 800];
@@ -1779,8 +1806,9 @@ mod tests {
     /// chunks played at a device's rate still hand the analysis every sample
     /// librespot decoded, in windows of the decoder's rate
     #[test]
+    #[cfg(feature = "spotify")]
     fn converted_chunks_fill_the_same_analysis_windows() {
-        let frames = |count: usize| count * NUM_CHANNELS as usize;
+        let frames = |count: usize| count * NUM_CHANNELS;
         let packets: Vec<usize> = [1_024, 1_024, 576, 128, 128, 128, 576, 1_024]
             .iter()
             .cycle()
@@ -1813,8 +1841,9 @@ mod tests {
     /// a time: what it plays is the chunks end to end, and the analysis still
     /// gets every window of what was decoded
     #[test]
+    #[cfg(feature = "spotify")]
     fn blocks_played_from_the_queue_are_the_chunks_end_to_end() {
-        let frames = |count: usize| count * NUM_CHANNELS as usize;
+        let frames = |count: usize| count * NUM_CHANNELS;
         let packets: Vec<usize> = [1_024, 576, 128, 128, 1_024]
             .iter()
             .cycle()

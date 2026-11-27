@@ -20,7 +20,9 @@
 
 #include "core/Async.h"
 #include "spotify/CredentialStore.h"
+#ifdef SWIFTIFY_HAS_SPOTIFY
 #include "spotify/OAuthFlow.h"
+#endif
 #include "spotify/SpotifyError.h"
 #include "spotify/WebApi.h"
 
@@ -71,6 +73,7 @@ class SpotifySession : public QObject {
     QML_NAMED_ELEMENT(Session)
     QML_SINGLETON
 
+    Q_PROPERTY(bool enabled READ isEnabled CONSTANT FINAL)
     Q_PROPERTY(QString status READ status NOTIFY statusChanged FINAL)
     Q_PROPERTY(QString libraryStatus READ libraryStatus NOTIFY libraryStatusChanged FINAL)
     Q_PROPERTY(bool connected READ isConnected NOTIFY connectedChanged FINAL)
@@ -89,12 +92,13 @@ public:
     static const QStringList kLibraryScopes;
 
     SpotifySession(PlaybackCore *core, CredentialStore *credentials, QNetworkAccessManager *network,
-                   ErrorCenter *errors, QObject *parent = nullptr);
+                   ErrorCenter *errors, QObject *parent = nullptr, bool enabled = true);
     ~SpotifySession() override;
 
     static SpotifySession *instance();
     static SpotifySession *create(QQmlEngine *, QJSEngine *);
 
+    bool isEnabled() const { return m_enabled; }
     QString status() const { return m_status; }
     QString libraryStatus() const { return m_libraryStatus; }
     bool isConnected() const { return m_connected; }
@@ -117,7 +121,7 @@ public:
     bool isRepairingLogin() const { return m_repairing.has_value(); }
     bool isLoginForLibrary() const { return m_loginPurpose == LoginPurpose::Library; }
     QUrl authorizationUrl() const { return m_authorizationUrl; }
-    QString redirectUri() const { return OAuthFlow::redirectUri().toString(); }
+    QString redirectUri() const;
 
     Q_INVOKABLE void beginPlaybackLogin();
     Q_INVOKABLE void beginLibraryLogin();
@@ -226,7 +230,10 @@ private:
     PlaybackCore *m_core;
     CredentialStore *m_credentials;
     ErrorCenter *m_errors;
+    const bool m_enabled;
+#ifdef SWIFTIFY_HAS_SPOTIFY
     OAuthFlow m_oauth;
+#endif
     WebApi m_webApi;
     std::function<QCoro::Task<>()> m_loadInitialLibrary;
 
@@ -236,7 +243,7 @@ private:
     bool m_connected = false;
     bool m_libraryConnected = false;
     bool m_libraryNeedsUpgrade = false;
-    bool m_evaluatingStoredLogin = true;
+    bool m_evaluatingStoredLogin = m_enabled;
     /// reading the saved logins at launch is still under way
     bool m_restoring = false;
     bool m_playbackConnectionIsSuspect = false;
@@ -279,8 +286,9 @@ private:
 template <typename T>
 QCoro::Task<T> SpotifySession::withLibraryAccessToken(std::function<QCoro::Task<T>(QString)> operation)
 {
+#ifdef SWIFTIFY_HAS_SPOTIFY
     const quint64 generation = m_generation;
-    if (m_libraryAccessToken.isEmpty()) {
+    if (!m_enabled || m_libraryAccessToken.isEmpty()) {
         throw SpotifyError(SpotifyError::Kind::Session, QStringLiteral("Connect your Spotify library to continue."));
     }
 
@@ -336,6 +344,10 @@ QCoro::Task<T> SpotifySession::withLibraryAccessToken(std::function<QCoro::Task<
         throwIfStale(generation);
         throw;
     }
+#else
+    Q_UNUSED(operation);
+    throw SpotifyError(SpotifyError::Kind::Session, QStringLiteral("Spotify support is disabled."));
+#endif
 }
 
 } // namespace swiftify
