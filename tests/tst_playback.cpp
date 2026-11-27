@@ -659,6 +659,76 @@ private slots:
         QCOMPARE(sleepFadeLevel(SleepFade::Entire, 0, 60), 0.0);
     }
 
+    void enhancedLrcPreservesTextAndWordBoundaries()
+    {
+        const auto lyrics = Lyrics::fromLrc(QStringLiteral(
+            "[offset:+100]\n[00:01.00][00:04.00]<00:01.00>Hello <00:01.50>& <00:02.00>world<00:02.50>"));
+        QVERIFY(lyrics.has_value());
+        QCOMPARE(lyrics->lines.size(), 2);
+        QCOMPARE(lyrics->lines[0].words, QStringLiteral("Hello & world"));
+        QCOMPARE(lyrics->lines[0].startTimeMs, 900u);
+        QCOMPARE(lyrics->lines[0].endTimeMs, 2400u);
+        QCOMPARE(lyrics->wordIndex(0, 1550), 1);
+        QCOMPARE(lyrics->wordIndex(0, 2700), -1);
+        QCOMPARE(lyrics->lines[1].timings[2].startTimeMs, 4900u);
+
+        LyricsModel model;
+        model.setLines(lyrics->lines);
+        QCOMPARE(model.highlightedWords(0, 1), QStringLiteral("Hello <u>&amp;</u> world"));
+    }
+
+    void ttmlUsesRelativeWordTimesAndRoundTripsLocalEdits()
+    {
+        const QString source = QStringLiteral(
+            "<tt xmlns=\"http://www.w3.org/ns/ttml\"><body><div begin=\"1s\">"
+            "<p begin=\"500ms\" dur=\"3s\"><span begin=\"0s\" end=\"500ms\">歌</span> "
+            "<span begin=\"1s\" end=\"2s\">う</span></p>"
+            "</div></body></tt>");
+        auto lyrics = Lyrics::fromTtml(source);
+        QVERIFY(lyrics.has_value());
+        QCOMPARE(lyrics->lines[0].startTimeMs, 1500u);
+        QCOMPARE(lyrics->lines[0].timings[1].startTimeMs, 2500u);
+        QCOMPARE(lyrics->wordIndex(0, 2000), -1);
+        QVERIFY(lyrics->editLine(0, 3000, lyrics->lines[0].words));
+        const auto edited = Lyrics::fromTtml(QString::fromUtf8(lyrics->toTtml()));
+        QVERIFY(edited.has_value());
+        QCOMPARE(edited->lines[0].words, QStringLiteral("歌 う"));
+        QCOMPARE(edited->lines[0].timings[1].endTimeMs, 5000u);
+        QCOMPARE(edited->wordIndex(0, 4100), 1);
+        QVERIFY(lyrics->editLine(0, 3000, QStringLiteral("新しい歌詞")));
+        QVERIFY(lyrics->lines[0].timings.isEmpty());
+        QVERIFY(!Lyrics::fromTtml(QStringLiteral("<!DOCTYPE tt><tt><body><p>Bad</p></body></tt>")));
+    }
+
+    void appleTtmlUsesTrackRelativeWordTimes()
+    {
+        const auto lyrics = Lyrics::fromTtml(QStringLiteral(
+            "<tt xmlns=\"http://www.w3.org/ns/ttml\" xmlns:itunes=\"http://music.apple.com/lyric-ttml-internal\">"
+            "<body><div><p begin=\"0:04.500\" end=\"0:06.500\">"
+            "<span begin=\"0:05.000\" end=\"0:05.750\">声</span>"
+            "</p></div></body></tt>"));
+        QVERIFY(lyrics.has_value());
+        QCOMPARE(lyrics->lines[0].timings[0].startTimeMs, 5000u);
+    }
+
+    void lrcOffsetsApplyToEveryCue()
+    {
+        const auto advanced = Lyrics::fromLrc(QStringLiteral("\ufeff[00:00.20]one\n[00:01.00][00:03.00]two\n[OFFSET: +400]\n"));
+        QVERIFY(advanced);
+        QVERIFY(advanced->synchronized);
+        QCOMPARE(advanced->lines.size(), 3);
+        QCOMPARE(advanced->lines[0].startTimeMs, 0u);
+        QCOMPARE(advanced->lines[1].startTimeMs, 600u);
+        QCOMPARE(advanced->lines[1].endTimeMs, 2600u);
+        QCOMPARE(advanced->lineIndex(-1), -1);
+        QCOMPARE(advanced->lineIndex(600), 1);
+
+        const auto delayed = Lyrics::fromLrc(QStringLiteral("[offset:-500]\n[00:00.10]one"));
+        QVERIFY(delayed);
+        QCOMPARE(delayed->lineIndex(599), -1);
+        QCOMPARE(delayed->lineIndex(600), 0);
+    }
+
     void lyricsFollowThePosition()
     {
         Rig rig;
@@ -677,6 +747,51 @@ private slots:
         rig.core.duration = 200'000;
         rig.core.position = 5'500;
         QTRY_COMPARE_WITH_TIMEOUT(rig.player.activeLyricIndex(), 1, 2000);
+        rig.player.setLyricsDelayMs(1000);
+        QCOMPARE(rig.player.activeLyricIndex(), 0);
+        rig.player.seekToLyricLine(1);
+        QCOMPARE(rig.core.position, 6000u);
+        QCOMPARE(rig.player.activeLyricIndex(), 1);
+    }
+
+    void lyricOffsetsFollowTheTrackAcrossRestartsAndQueueEntries()
+    {
+        QTemporaryDir directory;
+        QVERIFY(directory.isValid());
+        const QString path = directory.filePath(QStringLiteral("swiftify.conf"));
+        const Song first = makeSong(QStringLiteral("first"));
+        const Song second = makeSong(QStringLiteral("second"));
+        const Song repeated = first.freshInstance();
+        const QList<Song> queue {first, second, repeated};
+        {
+            Settings settings(path);
+            settings.setValue(QStringLiteral("lyricsDelayMs"), -125);
+            settings.sync();
+        }
+        {
+            Rig rig(path);
+            rig.player.play(first, queue);
+            rig.finishLoading();
+            QCOMPARE(rig.player.lyricsDelayMs(), -125);
+            rig.player.setLyricsDelayMs(75);
+
+            rig.player.play(second, queue);
+            rig.finishLoading();
+            QCOMPARE(rig.player.lyricsDelayMs(), -125);
+            rig.player.setLyricsDelayMs(0);
+
+            rig.player.play(repeated, queue);
+            rig.finishLoading();
+            QCOMPARE(rig.player.lyricsDelayMs(), 75);
+        }
+        {
+            Rig rig(path);
+            QCOMPARE(rig.player.lyricsDelayMs(), 75);
+            rig.player.play(second, queue);
+            rig.finishLoading();
+            QCOMPARE(rig.player.lyricsDelayMs(), 0);
+            QCOMPARE(rig.settings.value(QStringLiteral("lyricsDelayMs")).toInt(), -125);
+        }
     }
 
     void missingLyricsShowThePhrase()
