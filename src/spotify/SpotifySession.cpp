@@ -38,6 +38,9 @@ Q_LOGGING_CATEGORY(lcSession, "swiftify.session")
 
 namespace {
 SpotifySession *s_instance = nullptr;
+#ifdef SWIFTIFY_HAS_SPOTIFY
+constexpr int cancelledRefresh = -1;
+#endif
 }
 
 #ifdef SWIFTIFY_HAS_SPOTIFY
@@ -218,21 +221,24 @@ void SpotifySession::restoreSavedSessions()
 
 QCoro::Task<> SpotifySession::restore()
 {
+    const QPointer<SpotifySession> owner(this);
     const quint64 generation = m_generation;
     m_restoring = true;
-    const auto finished = qScopeGuard([this] { m_restoring = false; });
+    const auto finished = qScopeGuard([owner] { if (owner) owner->m_restoring = false; });
     std::optional<StoredCredentials> playback;
     std::optional<StoredCredentials> library;
     try {
         playback = co_await m_credentials->load(CredentialStore::Account::Playback);
+        if (!owner || generation != m_generation) co_return;
         library = co_await m_credentials->load(CredentialStore::Account::Library);
     } catch (const SpotifyError &error) {
+        if (!owner || generation != m_generation) co_return;
         setEvaluatingStoredLogin(false);
         reportError(error.message());
         qCWarning(lcSession) << "reading saved logins:" << error.message();
         co_return;
     }
-    if (generation != m_generation) {
+    if (!owner || generation != m_generation) {
         co_return;
     }
 
@@ -279,14 +285,14 @@ QCoro::Task<> SpotifySession::restore()
     if (library) {
         co_await restoreLibrarySession(*library);
     }
-    if (generation != m_generation) {
+    if (!owner || generation != m_generation) {
         co_return;
     }
     showWhenReady();
     if (playback) {
         co_await restorePlaybackSession(*playback);
     }
-    if (generation != m_generation) {
+    if (!owner || generation != m_generation) {
         co_return;
     }
     showWhenReady();
@@ -518,8 +524,9 @@ void SpotifySession::logOut()
 
 QCoro::Task<> SpotifySession::logOutAsync()
 {
+    const QPointer<SpotifySession> owner(this);
     m_loggingOut = true;
-    const auto complete = qScopeGuard([this] { m_loggingOut = false; });
+    const auto complete = qScopeGuard([owner] { if (owner) owner->m_loggingOut = false; });
     ++m_generation;
     cancelLogin();
     m_playbackRefresh.reset();
@@ -553,6 +560,7 @@ QCoro::Task<> SpotifySession::logOutAsync()
     try {
         co_await m_credentials->removeAll();
     } catch (const SpotifyError &error) {
+        if (!owner) co_return;
         reportError(error.message());
         qCWarning(lcSession) << "could not remove the saved Spotify login";
     }
@@ -562,6 +570,7 @@ QCoro::Task<> SpotifySession::logOutAsync()
 
 QCoro::Task<QString> SpotifySession::connectPlaybackCore(QString accessToken, QString storedLogin)
 {
+    const QPointer<SpotifySession> owner(this);
     // connecting opens no audio output: outputs open when a song starts, so
     // signing in never takes the speakers from whatever else is playing.
     const quint64 coreGeneration = m_core->generation();
@@ -572,7 +581,7 @@ QCoro::Task<QString> SpotifySession::connectPlaybackCore(QString accessToken, QS
     } else {
         login = co_await m_core->connectStoredSession(storedLogin, clientId);
     }
-    if (m_core->generation() != coreGeneration) {
+    if (!owner || m_core->generation() != coreGeneration) {
         throw Cancelled();
     }
     emit playbackConnected();
@@ -636,6 +645,7 @@ QCoro::Task<> SpotifySession::reconnectPlayback()
 QCoro::Task<QString> SpotifySession::awaitRefresh(std::shared_ptr<TokenRefresh> refresh)
 {
     const auto [ok, accessToken, errorKind, errorMessage] = co_await qCoro(refresh.get(), &TokenRefresh::finished);
+    if (errorKind == cancelledRefresh) throw Cancelled();
     if (!ok) {
         throw SpotifyError(SpotifyError::Kind(errorKind), errorMessage);
     }
@@ -644,9 +654,11 @@ QCoro::Task<QString> SpotifySession::awaitRefresh(std::shared_ptr<TokenRefresh> 
 
 QCoro::Task<QString> SpotifySession::playbackAccessToken(bool fresh)
 {
+    const QPointer<SpotifySession> owner(this);
     const quint64 generation = m_generation;
     if (m_playbackRefresh) {
         const QString token = co_await awaitRefresh(m_playbackRefresh);
+        if (!owner) throw Cancelled();
         throwIfStale(generation);
         co_return token;
     }
@@ -668,17 +680,25 @@ QCoro::Task<QString> SpotifySession::playbackAccessToken(bool fresh)
     OAuthToken token;
     try {
         token = co_await m_oauth.refreshAccessToken(spent, clientId);
+    } catch (const Cancelled &) {
+        emit refresh->finished(false, {}, cancelledRefresh, {});
+        throw;
     } catch (const SpotifyError &error) {
+        if (!owner || generation != m_generation) {
+            emit refresh->finished(false, {}, cancelledRefresh, {});
+            throw Cancelled();
+        }
         if (m_playbackRefresh == refresh) {
             m_playbackRefresh.reset();
         }
-        const SpotifyError shown = generation == m_generation ? repairIfRevoked(error, LoginPurpose::Playback) : error;
+        const SpotifyError shown = repairIfRevoked(error, LoginPurpose::Playback);
         emit refresh->finished(false, {}, int(shown.kind()), shown.message());
         throw shown;
     }
     // held before anything else can run: a refresh after this one has to
     // spend the token spotify just issued, never the one it replaced, or
     // spotify takes the login back. kept in the background after
+    if (!owner) throw Cancelled();
     if (generation == m_generation) {
         m_refreshToken = token.refreshToken.isEmpty() ? spent : token.refreshToken;
         m_playbackAccessToken = token.accessToken;
@@ -711,9 +731,11 @@ QCoro::Task<> SpotifySession::ensureFreshPlaybackConnection(bool force)
 
 QCoro::Task<QString> SpotifySession::refreshLibraryAccessToken()
 {
+    const QPointer<SpotifySession> owner(this);
     const quint64 generation = m_generation;
     if (m_libraryRefresh) {
         const QString token = co_await awaitRefresh(m_libraryRefresh);
+        if (!owner) throw Cancelled();
         throwIfStale(generation);
         co_return token;
     }
@@ -730,15 +752,23 @@ QCoro::Task<QString> SpotifySession::refreshLibraryAccessToken()
     OAuthToken token;
     try {
         token = co_await m_oauth.refreshAccessToken(spent, clientId);
+    } catch (const Cancelled &) {
+        emit refresh->finished(false, {}, cancelledRefresh, {});
+        throw;
     } catch (const SpotifyError &error) {
+        if (!owner || generation != m_generation) {
+            emit refresh->finished(false, {}, cancelledRefresh, {});
+            throw Cancelled();
+        }
         if (m_libraryRefresh == refresh) {
             m_libraryRefresh.reset();
         }
-        const SpotifyError shown = generation == m_generation ? repairIfRevoked(error, LoginPurpose::Library) : error;
+        const SpotifyError shown = repairIfRevoked(error, LoginPurpose::Library);
         emit refresh->finished(false, {}, int(shown.kind()), shown.message());
         throw shown;
     }
     // held before anything else can run, as above
+    if (!owner) throw Cancelled();
     if (generation == m_generation) {
         m_libraryRefreshToken = token.refreshToken.isEmpty() ? spent : token.refreshToken;
         m_libraryAccessToken = token.accessToken;
@@ -782,6 +812,7 @@ QCoro::Task<> SpotifySession::drainSaves(CredentialStore::Account account)
 {
     // one write at a time, the latest last: a slow keychain never ends up
     // holding an older token than the one in use
+    const QPointer<SpotifySession> owner(this);
     SaveQueue &queue = m_saves[int(account)];
     queue.running = true;
     while (queue.next) {
@@ -793,9 +824,11 @@ QCoro::Task<> SpotifySession::drainSaves(CredentialStore::Account account)
         try {
             co_await m_credentials->save(account, credentials);
         } catch (const SpotifyError &error) {
+            if (!owner) co_return;
             qCWarning(lcSession) << "keeping the spotify login:" << error.message();
             reportError(error.message());
         }
+        if (!owner) co_return;
         // logged out while it was written: it goes again
         if (generation != m_generation) {
             try {
@@ -803,6 +836,7 @@ QCoro::Task<> SpotifySession::drainSaves(CredentialStore::Account account)
             } catch (const SpotifyError &error) {
                 qCWarning(lcSession) << "deleting a spotify login kept during a logout:" << error.message();
             }
+            if (!owner) co_return;
         }
     }
     queue.running = false;

@@ -104,7 +104,10 @@ OAuthFlow::OAuthFlow(QNetworkAccessManager *network, QObject *parent)
     connect(&m_server, &QTcpServer::newConnection, this, &OAuthFlow::acceptConnection);
 }
 
-OAuthFlow::~OAuthFlow() = default;
+OAuthFlow::~OAuthFlow()
+{
+    cancel();
+}
 
 bool OAuthFlow::isCallbackUrl(const QUrl &url)
 {
@@ -286,11 +289,19 @@ QCoro::Task<OAuthToken> OAuthFlow::requestToken(QUrlQuery form)
     }
 
     const auto generation = m_generation;
-    auto *reply = boundReply(m_network->post(request, encoded), maxTokenReply, 20'000);
-    m_replies.insert(reply);
-    const auto retire = qScopeGuard([&] { m_replies.remove(reply); reply->deleteLater(); });
-    co_await qCoro(reply).waitForFinished();
-    if (generation != m_generation) {
+    auto *pending = boundReply(m_network->post(request, encoded), maxTokenReply, 20'000);
+    const QPointer<QNetworkReply> reply(pending);
+    const QPointer<OAuthFlow> owner(this);
+    m_replies.insert(pending);
+    connect(pending, &QObject::destroyed, this, [this, pending] { m_replies.remove(pending); });
+    const auto retire = qScopeGuard([owner, reply] {
+        if (!reply) return;
+        if (owner) owner->m_replies.remove(reply.data());
+        reply->deleteLater();
+    });
+    co_await qCoro(pending).waitForFinished();
+    if (!owner) throw Cancelled();
+    if (!reply || generation != m_generation) {
         throw SpotifyError(SpotifyError::Kind::OAuth, QStringLiteral("Spotify authorization was cancelled."));
     }
     if (replyLimit(*reply, maxTokenReply) != ReplyLimit::None) {

@@ -24,6 +24,7 @@
 #include <QByteArray>
 #include <QHash>
 #include <QDeadlineTimer>
+#include <QObject>
 #include <QSet>
 #include <QJsonDocument>
 #include <QUrlQuery>
@@ -38,11 +39,12 @@ namespace swiftify {
 /// the spotify web api calls the library needs, as SpotifyWebAPI.swift makes
 /// them. every call throws SpotifyError on failure; a 401 surfaces as Unauthorized
 /// so the caller can refresh its token and retry once.
-class WebApi {
+class WebApi : public QObject {
 public:
     static constexpr int kMaximumCoverBytes = 256'000;
 
     explicit WebApi(QNetworkAccessManager *network);
+    ~WebApi() override;
     void cancelRequests();
 
     QCoro::Task<Profile> profile(QString accessToken);
@@ -53,7 +55,7 @@ public:
     QCoro::Task<int> savedSongTotal(QString accessToken);
     QCoro::Task<QList<Song>> recentlyPlayed(QString accessToken);
     QCoro::Task<SearchResults> search(QString query, QString accessToken, CancelToken cancel = {});
-    QCoro::Task<Song> song(QString trackId, QString accessToken);
+    QCoro::Task<Song> song(QString trackId, QString accessToken, CancelToken cancel = {});
     QCoro::Task<Album> album(QString albumId, QString accessToken, CancelToken cancel = {});
     QCoro::Task<Playlist> playlist(QString playlistId, QString accessToken, CancelToken cancel = {});
     QCoro::Task<Artist> artist(QString artistId, QString accessToken, CancelToken cancel = {});
