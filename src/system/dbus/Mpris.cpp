@@ -76,7 +76,7 @@ Mpris::Mpris(PlaybackController *player, AudioShaping *sound, QObject *parent)
     connect(m_player, &PlaybackController::shuffleChanged, this, &Mpris::update);
     connect(m_player, &PlaybackController::repeatModeChanged, this, &Mpris::update);
     connect(m_player, &PlaybackController::positionChanged, this, &Mpris::checkForJump);
-    connect(m_sound, &AudioShaping::shapingChanged, this, &Mpris::update);
+    if (m_sound) connect(m_sound, &AudioShaping::shapingChanged, this, &Mpris::update);
     update();
 }
 
@@ -132,12 +132,12 @@ qlonglong Mpris::positionMicroseconds() const
 
 double Mpris::playbackRate() const
 {
-    return hasSong() && m_player->currentSong().isLocalFile() ? m_sound->tempo() : 1.0;
+    return m_sound && hasSong() && m_player->currentSong().isLocalFile() ? m_sound->tempo() : 1.0;
 }
 
 void Mpris::setPlaybackRate(double rate)
 {
-    if (hasSong() && m_player->currentSong().isLocalFile() && rate >= 0.5 && rate <= 2.0) {
+    if (m_sound && hasSong() && m_player->currentSong().isLocalFile() && rate >= 0.5 && rate <= 2.0) {
         m_sound->setTempo(rate);
     }
 }

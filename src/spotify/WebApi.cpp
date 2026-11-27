@@ -84,7 +84,7 @@ void WebApi::cancelRequests()
 }
 
 QCoro::Task<QByteArray> WebApi::requestData(QUrl url, QByteArray method, QString accessToken,
-                                            QByteArray body, QByteArray contentType, CancelToken cancel)
+                                            QByteArray body, QByteArray contentType, CancelToken cancel, int totalMs)
 {
 #ifdef SWIFTIFY_HAS_SPOTIFY
     throwIfCancelled(cancel);
@@ -111,7 +111,7 @@ QCoro::Task<QByteArray> WebApi::requestData(QUrl url, QByteArray method, QString
     }
 
     const auto generation = m_generation;
-    auto *reply = boundReply(m_network->sendCustomRequest(request, method, body), maxApiBytes, 30'000);
+    auto *reply = boundReply(m_network->sendCustomRequest(request, method, body), maxApiBytes, totalMs);
     m_replies.insert(reply);
     if (cancel) cancel->watch(reply);
     const auto retire = qScopeGuard([&] { m_replies.remove(reply); reply->deleteLater(); });
@@ -149,14 +149,15 @@ QCoro::Task<QByteArray> WebApi::requestData(QUrl url, QByteArray method, QString
     Q_UNUSED(body);
     Q_UNUSED(contentType);
     Q_UNUSED(cancel);
+    Q_UNUSED(totalMs);
     throw SpotifyError(SpotifyError::Kind::Session, QStringLiteral("Spotify support is disabled."));
 #endif
 }
 
 QCoro::Task<QJsonDocument> WebApi::requestJson(QUrl url, QByteArray method, QString accessToken,
-                                               QByteArray body, QByteArray contentType, CancelToken cancel)
+                                               QByteArray body, QByteArray contentType, CancelToken cancel, int totalMs)
 {
-    const QByteArray data = co_await requestData(url, method, accessToken, body, contentType, cancel);
+    const QByteArray data = co_await requestData(url, method, accessToken, body, contentType, cancel, totalMs);
     QJsonParseError error;
     QJsonDocument document = QJsonDocument::fromJson(data, &error);
     if (error.error != QJsonParseError::NoError) {
@@ -191,10 +192,11 @@ QCoro::Task<QJsonObject> WebApi::requestPage(QUrl url, QString accessToken, Canc
 {
     const auto generation = m_generation;
     if (deadline.hasExpired()) throw SpotifyError::requestFailed(QStringLiteral("Spotify pagination timed out."));
+    const auto requestLimit = [deadline] { return int(qBound(qint64(1), deadline.remainingTime(), qint64(30'000))); };
     // set in the handler and waited out after it: there is no co_await in a catch
     int retryAfter = 0;
     try {
-        co_return (co_await requestJson(url, "GET", accessToken, {}, {}, cancel)).object();
+        co_return (co_await requestJson(url, "GET", accessToken, {}, {}, cancel, requestLimit())).object();
     } catch (const SpotifyError &error) {
         // a short wait is worth it; a long one is the caller's to report
         if (error.kind() != SpotifyError::Kind::RateLimited || error.retryAfterSeconds() > 10) {
@@ -208,7 +210,7 @@ QCoro::Task<QJsonObject> WebApi::requestPage(QUrl url, QString accessToken, Canc
     co_await QCoro::sleepFor(std::chrono::seconds(retryAfter));
     if (generation != m_generation) throw Cancelled();
     throwIfCancelled(cancel);
-    co_return (co_await requestJson(url, "GET", accessToken, {}, {}, cancel)).object();
+    co_return (co_await requestJson(url, "GET", accessToken, {}, {}, cancel, requestLimit())).object();
 }
 
 QCoro::Task<> WebApi::collectOffsetPages(QString path, QUrlQuery query, QString accessToken,

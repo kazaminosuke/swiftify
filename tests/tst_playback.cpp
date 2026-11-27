@@ -16,6 +16,7 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
+#include "core/RustCore.h"
 #include "FakeCore.h"
 
 #include "app/ErrorCenter.h"
@@ -107,6 +108,28 @@ private:
     };
 
 private slots:
+    void nativeCoreCompletionCanResetItsHandle()
+    {
+        RustCore core;
+        const auto original = core.generation();
+        int finished = 0;
+        const auto request = [&]() -> QCoro::Task<> {
+            try {
+                co_await core.lyricsJson(QStringLiteral("spotify:track:0000000000000000000000"));
+            } catch (const std::exception &) {
+                core.reset();
+                ++finished;
+            }
+        };
+        detach(request());
+        QTRY_COMPARE(finished, 1);
+        QCOMPARE(core.generation(), original + 1);
+        detach(request());
+        core.reset();
+        QTRY_COMPARE(finished, 2);
+        QCOMPARE(core.generation(), original + 2);
+    }
+
     void lastTrackQueueAndPositionSurviveRestartWithoutStartingSound()
     {
         QTemporaryDir directory;
