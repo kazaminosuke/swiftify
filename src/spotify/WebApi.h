@@ -84,9 +84,9 @@ public:
 
 private:
     QCoro::Task<QByteArray> requestData(QUrl url, QByteArray method, QString accessToken,
-                                        QByteArray body = {}, QByteArray contentType = {}, CancelToken cancel = {});
+                                        QByteArray body = {}, QByteArray contentType = {}, CancelToken cancel = {}, int totalMs = 30'000);
     QCoro::Task<QJsonDocument> requestJson(QUrl url, QByteArray method, QString accessToken,
-                                           QByteArray body = {}, QByteArray contentType = {}, CancelToken cancel = {});
+                                           QByteArray body = {}, QByteArray contentType = {}, CancelToken cancel = {}, int totalMs = 30'000);
     /// follows `next` until it runs out. a page url seen twice is an error,
     /// rather than a loop.
     QCoro::Task<> collectPages(QUrl firstUrl, QString accessToken,

@@ -336,13 +336,13 @@ QCoro::Task<> StatsStore::loadStatsFm(CancelToken token)
     setError({});
     try {
         if (m_profileFor != name) {
-            const StatsFmProfile profile = co_await m_statsFm.profile(name);
+            const StatsFmProfile profile = co_await m_statsFm.profile(name, token);
             throwIfCancelled(token);
             m_profile = profile;
             m_profileFor = name;
             emit profileChanged();
         }
-        const StatsSnapshot snapshot = co_await m_statsFm.snapshot(name, m_period, m_profile.isPlus);
+        const StatsSnapshot snapshot = co_await m_statsFm.snapshot(name, m_period, m_profile.isPlus, token);
         throwIfCancelled(token);
         apply(snapshot);
         setLoading(false);
