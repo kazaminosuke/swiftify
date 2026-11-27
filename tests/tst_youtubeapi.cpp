@@ -71,7 +71,7 @@ void YouTubeApiTest::searchUsesMusicCategoryAndKeepsCredentialsOutOfUrl()
     const Api api(network);
     const QString term = QStringLiteral("a+b & 日本語 %");
     const std::unique_ptr<QNetworkReply> reply(api.fetch(Collection::Search, term,
-                                                        QStringLiteral("next+page"), {}, "test-key"));
+                                                        QStringLiteral("next+page"), "unused-test-token", "test-key"));
     const QUrl url = reply->request().url();
     const QUrlQuery query(url);
     QCOMPARE(url.path(), QStringLiteral("/youtube/v3/search"));
@@ -82,6 +82,7 @@ void YouTubeApiTest::searchUsesMusicCategoryAndKeepsCredentialsOutOfUrl()
     QCOMPARE(query.queryItemValue(QStringLiteral("type")), QStringLiteral("video"));
     QCOMPARE(reply->request().rawHeader("X-Goog-Api-Key"), QByteArray("test-key"));
     QVERIFY(!url.toEncoded().contains("test-key"));
+    QVERIFY(!reply->request().hasRawHeader("Authorization"));
 }
 
 void YouTubeApiTest::searchTypesHaveSeparateIdsAndFilters()

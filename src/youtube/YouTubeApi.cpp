@@ -178,10 +178,12 @@ QNetworkReply *Api::fetch(Collection collection, const QString &value, const QSt
     QNetworkRequest request(url);
     request.setTransferTimeout(20'000);
     privateRequest(request);
-    if (!accessToken.isEmpty()) {
-        request.setRawHeader("Authorization", "Bearer " + accessToken);
-    } else if (!apiKey.isEmpty() && (path == QLatin1StringView("search") || collection == Collection::PlaylistItems)) {
+    const bool publicCollection = path == QLatin1StringView("search")
+        || (collection == Collection::PlaylistItems && accessToken.isEmpty());
+    if (publicCollection && !apiKey.isEmpty()) {
         request.setRawHeader("X-Goog-Api-Key", apiKey);
+    } else if (!publicCollection && !accessToken.isEmpty()) {
+        request.setRawHeader("Authorization", "Bearer " + accessToken);
     }
     return boundReply(m_network.get(request), maxReplyBytes, 25'000);
 }
