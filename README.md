@@ -13,7 +13,7 @@ a spotify player for desktop, built with Qt Quick on top of a Rust core that wra
 
 [![aur](https://img.shields.io/aur/version/swiftify-bin?style=for-the-badge&logo=archlinux&logoColor=white&label=aur&color=1793d1&labelColor=1d1b20)](https://aur.archlinux.org/packages/swiftify-bin)
 [![copr](https://img.shields.io/badge/copr-shredos%2Fswiftify-51a2da?style=for-the-badge&logo=fedora&logoColor=white&labelColor=1d1b20)](https://copr.fedorainfracloud.org/coprs/shredos/swiftify/)
-[![qt](https://img.shields.io/badge/Qt_Quick-6.10-41cd52?style=for-the-badge&logo=qt&logoColor=white&labelColor=1d1b20)](https://www.qt.io)
+[![qt](https://img.shields.io/badge/Qt_Quick-6.12.1-41cd52?style=for-the-badge&logo=qt&logoColor=white&labelColor=1d1b20)](https://www.qt.io)
 [![rust](https://img.shields.io/badge/core-rust-dea584?style=for-the-badge&logo=rust&logoColor=white&labelColor=1d1b20)](spotify-core)
 
 **[download](https://shredos.dev/#download)** · **[install](#install)** · **[before you start](#before-you-start)** · **[guides](#guides)** · **[build from source](#building-from-source)**
@@ -35,7 +35,9 @@ For a local build without Spotify, configure CMake with
 `-DENABLE_SPOTIFY=OFF`. The default `ON` builds the upstream-compatible service
 integration. The local build keeps music playback, EQ, ReplayGain, playlists
 and synchronized lyrics, and excludes librespot, Spotify authentication,
-Spotify Soloist and their dedicated Qt dependencies.
+Spotify Soloist and their dedicated Qt dependencies. For a portable Linux
+package, use `tools/build-linux-tarball.sh --qt <kit> --without-spotify` or
+select the release archive whose name ends in `-local.tar.gz`.
 
 When enabled at build time, the native YouTube catalogue opens with
 `swiftify --youtube`. See the [catalogue setup](docs/youtube-catalogue.md).
@@ -259,7 +261,7 @@ bind = , XF86AudioPlay, exec, swiftify --play-pause
 
 ## building from source
 
-- Qt 6.10 or newer with Qt Base, Qt Declarative, Qt Shader Tools and Qt WebSockets (plus Qt Network Authorization for the YouTube client)
+- Qt 6.12.1 or newer with Qt Base, Qt Declarative, Qt Shader Tools and Qt WebSockets (plus Qt Network Authorization for the YouTube client)
 - QtKeychain and QCoro 0.10 or newer, both built for Qt 6
 - CMake 3.24 or newer, Ninja, and a C++20 compiler
 - Rust (stable, from [rustup](https://rustup.rs))
@@ -320,8 +322,9 @@ cmake --build build
 cmake --install build
 ```
 
-on debian/ubuntu (or derivatives with Qt 6.8 or 6.9), use the build script that handles
-compatibility patches automatically
+On Debian or Ubuntu, select a Qt 6.12.1 or newer kit through
+`CMAKE_PREFIX_PATH` when the distro packages are older. The helper can install
+the build dependencies and install the result under your local prefix.
 
 ```sh
 sudo apt-get install git qt6-base-dev qt6-declarative-dev qt6-shader-baker \
@@ -342,10 +345,9 @@ cd swiftify
 ./tools/build-debian.sh --install-deps
 ```
 
-anywhere else, install the same reqs (Qt 6.10+ with D-Bus, OpenGL and Wayland, QtKeychain
+anywhere else, install the same reqs (Qt 6.12.1+ with D-Bus, OpenGL and Wayland, QtKeychain
 and QCoro for Qt 6, libpulse, plus the ALSA, OpenSSL and pkg-config dev packages), then
-run the cmake commands above. if you have Qt 6.8 or 6.9, use `tools/build-debian.sh` which
-applies the necessary compatibility patches.
+run the CMake commands above with a Qt 6.12.1 or later kit.
 
 `cmake --install` drops `swiftify` in `~/.local/bin` (make sure that's on your `PATH`)
 and the desktop entry, icons and fonts in `~/.local/share`.
@@ -364,7 +366,7 @@ the tray. `-DSWIFTIFY_DESKTOP_INTEGRATION=OFF` turns those off.
 
 install these
 
-- **Qt 6.10** with *Qt Shader Tools*, *Qt WebSockets* and *Qt Network Authorization*, **CMake** and **Ninja** from the **Qt online Installer**
+- **Qt 6.12.1** with *Qt Shader Tools*, *Qt WebSockets* and *Qt Network Authorization*, **CMake** and **Ninja** from the **Qt online Installer**
 - **Rust** from [rustup](https://rustup.rs)
 - **git** from [git-scm.com](https://git-scm.com/install/)
 
@@ -383,7 +385,7 @@ for a different Qt kit, toolchain location or install directory, pass overrides
 
 ```powershell
 .\tools\build-windows.ps1 -QtPath 'C:\Qt\6.11.2\msvc2022_64'
-.\tools\build-windows.ps1 -QtPath 'C:\Qt\6.10.3\mingw_64' -MingwPath 'C:\Qt\Tools\mingw1310_64\bin' -InstallPrefix "$env:LOCALAPPDATA\Programs\Swiftify"
+.\tools\build-windows.ps1 -QtPath 'C:\Qt\6.12.1\mingw_64' -MingwPath 'C:\Qt\Tools\mingw1310_64\bin' -InstallPrefix "$env:LOCALAPPDATA\Programs\Swiftify"
 ```
 
 adjust the example paths to your installed versions, MinGW must match your Qt

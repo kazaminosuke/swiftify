@@ -71,7 +71,7 @@ function Find-QtKit {
             if (Test-Path -LiteralPath $root) {
                 foreach ($versionDirectory in Get-ChildItem -LiteralPath $root -Directory) {
                     $version = $null
-                    if ([version]::TryParse($versionDirectory.Name, [ref]$version) -and $version -ge [version]'6.10') {
+                    if ([version]::TryParse($versionDirectory.Name, [ref]$version) -and $version -ge [version]'6.12.1') {
                         foreach ($kit in @('msvc2022_64', 'mingw_64')) {
                             $kitPath = Join-Path $versionDirectory.FullName $kit
                             if (Test-Path -LiteralPath "$kitPath\mkspecs\qconfig.pri") {
@@ -85,7 +85,7 @@ function Find-QtKit {
     )
     $selected = $candidates | Sort-Object Version -Descending | Select-Object -First 1
     if (-not $selected) {
-        throw 'No Qt 6.10+ x64 kit found. Install Qt, then pass -QtPath pointing to its msvc2022_64 or mingw_64 directory.'
+        throw 'No Qt 6.12.1+ x64 kit found. Install Qt, then pass -QtPath pointing to its msvc2022_64 or mingw_64 directory.'
     }
     return $selected.Path
 }
@@ -143,13 +143,19 @@ function Initialize-Msvc {
 }
 
 function Get-DependencySource {
-    param([string]$Git, [string]$Url, [string]$Destination)
+    param([string]$Git, [string]$Url, [string]$Revision, [string]$Destination)
 
     if (-not (Test-Path -LiteralPath $Destination)) {
-        Invoke-Native $Git @('clone', '--depth', '1', $Url, $Destination) | Out-Host
+        Invoke-Native $Git @('init', '--quiet', $Destination) | Out-Host
+        Invoke-Native $Git @('-C', $Destination, 'fetch', '--depth', '1', $Url, $Revision) | Out-Host
+        Invoke-Native $Git @('-C', $Destination, 'checkout', '--detach', 'FETCH_HEAD') | Out-Host
     }
     if (-not (Test-Path -LiteralPath "$Destination\.git") -or -not (Test-Path -LiteralPath "$Destination\CMakeLists.txt")) {
         throw "Incomplete dependency checkout at $Destination. Use a different -BuildRoot or remove that incomplete checkout before retrying."
+    }
+    $head = Invoke-Native $Git @('-C', $Destination, 'rev-parse', 'HEAD')
+    if ($head -ne $Revision -or (Invoke-Native $Git @('-C', $Destination, 'status', '--porcelain'))) {
+        throw "The dependency source at $Destination differs from its pinned commit."
     }
 }
 
@@ -175,8 +181,8 @@ function Invoke-WindowsBuild {
     $QtPath = Find-QtKit $QtPath
     $qtConfiguration = Get-Content -LiteralPath "$QtPath\mkspecs\qconfig.pri" -Raw
     $qtVersion = [regex]::Match($qtConfiguration, '(?m)^QT_VERSION\s*=\s*(\S+)').Groups[1].Value
-    if (-not $qtVersion -or [version]$qtVersion -lt [version]'6.10' -or $qtConfiguration -notmatch '(?m)^QT_ARCH\s*=\s*x86_64\s*$') {
-        throw 'Swiftify requires a Qt 6.10+ x64 kit.'
+    if (-not $qtVersion -or [version]$qtVersion -lt [version]'6.12.1' -or $qtConfiguration -notmatch '(?m)^QT_ARCH\s*=\s*x86_64\s*$') {
+        throw 'Swiftify requires a Qt 6.12.1+ x64 kit.'
     }
     foreach ($module in @('Qt6Core', 'Qt6Widgets', 'Qt6Quick', 'Qt6QuickControls2', 'Qt6ShaderTools', 'Qt6WebSockets', 'Qt6NetworkAuth')) {
         if (-not (Test-Path -LiteralPath "$QtPath\lib\cmake\$module\${module}Config.cmake")) {
@@ -249,8 +255,8 @@ function Invoke-WindowsBuild {
             "-DCMAKE_INSTALL_PREFIX=$($dependencyPrefix.Replace('\', '/'))", '-DCMAKE_INSTALL_BINDIR=bin'
         )
         $dependencies = @(
-            @{ Name = 'qtkeychain'; Url = 'https://github.com/frankosterfeld/qtkeychain.git'; Options = @('-DBUILD_WITH_QT5=OFF', '-DBUILD_TEST_APPLICATION=OFF', '-DBUILD_TRANSLATIONS=OFF') },
-            @{ Name = 'qcoro'; Url = 'https://github.com/qcoro/qcoro.git'; Options = @('-DUSE_QT_VERSION=6', '-DQCORO_WITH_QTDBUS=OFF', '-DQCORO_WITH_QTWEBSOCKETS=OFF', '-DQCORO_WITH_QTQUICK=OFF', '-DQCORO_WITH_QML=OFF', '-DQCORO_WITH_QTTEST=OFF', '-DQCORO_BUILD_EXAMPLES=OFF') }
+            @{ Name = 'qtkeychain'; Url = 'https://github.com/frankosterfeld/qtkeychain.git'; Revision = '875f77d9f61bd97fd84cca47ce3bc71186dfbd09'; Options = @('-DBUILD_WITH_QT5=OFF', '-DBUILD_TEST_APPLICATION=OFF', '-DBUILD_TRANSLATIONS=OFF') },
+            @{ Name = 'qcoro'; Url = 'https://github.com/qcoro/qcoro.git'; Revision = '98f23d8d8d67e9e24217d268927faec97c713fb0'; Options = @('-DUSE_QT_VERSION=6', '-DQCORO_WITH_QTDBUS=OFF', '-DQCORO_WITH_QTWEBSOCKETS=OFF', '-DQCORO_WITH_QTQUICK=OFF', '-DQCORO_WITH_QML=OFF', '-DQCORO_WITH_QTTEST=OFF', '-DQCORO_BUILD_EXAMPLES=OFF') }
         )
         if ($rustTarget -eq 'x86_64-pc-windows-msvc') {
             # windeployqt takes any dll named qt6... for one of qt's own and
@@ -262,9 +268,9 @@ function Invoke-WindowsBuild {
         }
         foreach ($dependency in $dependencies) {
             Write-Host "Building $($dependency.Name)..."
-            $dependencySource = Join-Path $sourcesDirectory $dependency.Name
+            $dependencySource = Join-Path $sourcesDirectory "$($dependency.Name)-$($dependency.Revision)"
             $dependencyBuild = Join-Path $buildDirectory $dependency.Name
-            Get-DependencySource $git $dependency.Url $dependencySource
+            Get-DependencySource $git $dependency.Url $dependency.Revision $dependencySource
             Invoke-Native $cmake (@('-S', $dependencySource, '-B', $dependencyBuild) + $commonOptions + $dependency.Options) | Out-Host
             Invoke-Native $cmake @('--build', $dependencyBuild, '--parallel', "$Jobs") | Out-Host
             Invoke-Native $cmake @('--install', $dependencyBuild) | Out-Host
@@ -286,7 +292,7 @@ function Invoke-WindowsBuild {
         if (-not (Test-Path -LiteralPath (Join-Path $InstallPrefix 'share\licenses\swiftify\LICENSE') -PathType Leaf)) {
             throw 'The license was not installed.'
         }
-        foreach ($license in @('material-color-utilities.LICENSE', 'rounded-polygon-qmljs.LICENSE', 'material-symbols.LICENSE', 'rust-crates.LICENSE', 'qt.LICENSE', 'qt.NOTICE', 'qtkeychain.LICENSE', 'qcoro.LICENSE', 'YouTubeBrand.NOTICE')) {
+        foreach ($license in @('material-color-utilities.LICENSE', 'rounded-polygon-qmljs.LICENSE', 'material-symbols.LICENSE', 'rust-crates.LICENSE', 'build-provenance.txt', 'qt.LICENSE', 'qt.NOTICE', 'qtkeychain.LICENSE', 'qcoro.LICENSE', 'YouTubeBrand.NOTICE')) {
             if (-not (Test-Path -LiteralPath (Join-Path $InstallPrefix "share\licenses\swiftify\$license") -PathType Leaf)) {
                 throw "$license was not installed."
             }
