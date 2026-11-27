@@ -76,6 +76,7 @@ GoogleAuthorization::GoogleAuthorization(QString clientId, QString clientSecret,
         invalidate(tr("The Google authorization request timed out. Sign in again."));
     });
     m_expiration.setSingleShot(true);
+    m_expiration.setTimerType(Qt::PreciseTimer);
     connect(&m_expiration, &QTimer::timeout, this, [this] {
         if (accessToken().isEmpty() && m_flow && m_flow->refreshToken().isEmpty()) {
             invalidate(tr("Google authorization expired. Sign in again."));

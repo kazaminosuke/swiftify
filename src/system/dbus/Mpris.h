@@ -36,7 +36,7 @@ class Mpris : public QObject {
     Q_OBJECT
 
 public:
-    explicit Mpris(PlaybackController *player, AudioShaping *sound, QObject *parent = nullptr);
+    explicit Mpris(PlaybackController *player, AudioShaping *sound = nullptr, QObject *parent = nullptr);
     ~Mpris() override;
 
     bool isRegistered() const { return m_registered; }

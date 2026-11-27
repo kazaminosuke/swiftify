@@ -137,7 +137,7 @@ private slots:
         QCOMPARE(manifest.write(json), json.size());
         manifest.close();
 
-        Settings settings(nullptr, storage.filePath(QStringLiteral("settings.ini")));
+        Settings settings(storage.filePath(QStringLiteral("settings.ini")));
         LocalLibrary library(&settings, nullptr, storage.path());
         QVERIFY(library.playlist(QStringLiteral("local:valid")).isValid());
         QVERIFY(library.playlist(QStringLiteral("local:valid")).artworkUrl.isEmpty());
