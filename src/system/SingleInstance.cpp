@@ -54,9 +54,17 @@ QString runtimeDirectory()
 
 QString serverName(SingleInstance::Mode mode)
 {
-    const QByteArray identity = QCryptographicHash::hash(runtimeDirectory().toUtf8(), QCryptographicHash::Sha256).toHex().left(16);
-    return (mode == SingleInstance::Mode::Catalogue ? QStringLiteral("swiftify-catalogue-")
-                                                     : QStringLiteral("swiftify-")) + QString::fromLatin1(identity);
+    const auto directory = runtimeDirectory();
+    const QByteArray identity = QCryptographicHash::hash(directory.toUtf8(), QCryptographicHash::Sha256).toHex().left(16);
+    const auto prefix = mode == SingleInstance::Mode::Catalogue ? QStringLiteral("swiftify-catalogue-")
+                                                               : QStringLiteral("swiftify-");
+    const auto name = prefix + QString::fromLatin1(identity);
+#ifdef Q_OS_LINUX
+    // Keep the endpoint beside its lock in the user-owned runtime directory.
+    return QDir(directory).filePath(name);
+#else
+    return name;
+#endif
 }
 
 bool knownCommand(const QByteArray &command)
