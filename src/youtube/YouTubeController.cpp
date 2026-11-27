@@ -136,6 +136,7 @@ void YouTubeController::signOut()
     reset(Search);
     m_searchTerm.clear();
     m_channelError.clear();
+    emit catalogueStopped();
     m_authorization.disconnectAccount();
     emit pageChanged();
 }
@@ -239,6 +240,7 @@ void YouTubeController::enforceFailure(const Page &page, Credential used)
         if (m_channelReply) m_channelError = page.error;
         stopPage();
         stopChannel();
+        emit catalogueStopped();
         if (m_authorization.busy() && (signedIn() || signingIn())) {
             m_authorization.invalidate(page.error);
         }
@@ -255,6 +257,7 @@ void YouTubeController::enforceFailure(const Page &page, Credential used)
             stopPage();
             m_results.removeRows(0, m_results.rowCount());
             m_nextPage.clear();
+            emit catalogueStopped();
         }
         m_channelName.clear();
         if (page.failure == ApiFailure::Unauthorized || m_authorization.busy()) {

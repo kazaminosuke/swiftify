@@ -79,6 +79,7 @@ public:
 signals:
     void pageChanged();
     void accountChanged();
+    void catalogueStopped();
 
 private:
     enum class Credential { Public, Account };

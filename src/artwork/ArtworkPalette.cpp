@@ -20,7 +20,7 @@
 
 #include <QBuffer>
 #include <QHash>
-#include <QImageReader>
+#include "artwork/SafeImage.h"
 
 #include <algorithm>
 #include <cmath>
@@ -248,14 +248,7 @@ std::optional<WeightedPalette> extract(const QByteArray &encoded)
 {
     QBuffer buffer;
     buffer.setData(encoded);
-    QImageReader reader(&buffer);
-    reader.setAutoTransform(true);
-    const QSize size = reader.size();
-    if (size.isValid() && std::max(size.width(), size.height()) > 4 * kGridSize) {
-        // decode near the size the grid needs; the final smooth scale does the rest.
-        reader.setScaledSize(size.scaled(4 * kGridSize, 4 * kGridSize, Qt::KeepAspectRatio));
-    }
-    return extract(reader.read());
+    return extract(readSafeImage(buffer, 4 * kGridSize));
 }
 
 } // namespace swiftify::palette

@@ -96,6 +96,7 @@ private:
     std::unique_ptr<QSocketNotifier> m_notifier;
     QHash<quint64, std::shared_ptr<CoreRequest>> m_pending;
     quint64 m_nextRequestId = 0;
+    bool m_closing = false;
     quint64 m_generation = 0;
     /// given again to each core opened (a reset makes a fresh one)
     int m_streamKbps = 0;

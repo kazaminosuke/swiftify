@@ -19,6 +19,7 @@
 #pragma once
 
 #include <QLocalServer>
+#include <QLockFile>
 #include <QObject>
 #include <QStringList>
 
@@ -32,20 +33,21 @@ class SingleInstance : public QObject {
 
 public:
     enum class Mode { Playback, Catalogue };
-    explicit SingleInstance(Mode mode, QObject *parent = nullptr);
+    enum class Start { Primary, Forwarded, Failed };
+    explicit SingleInstance(Mode mode, bool spotifyEnabled = false, QObject *parent = nullptr);
 
-    /// true when another copy took the command, and this one should exit
-    bool forwardToRunningInstance(const QStringList &arguments);
+    Start start(const QStringList &arguments, bool requirePlaybackMode = false);
     /// the command a launch's arguments ask for; "raise" without one
     static QString commandFrom(const QStringList &arguments);
-    /// starts answering later launches
-    void listen();
 
 signals:
     void commandReceived(const QString &command);
 
 private:
     const QString m_serverName;
+    const QByteArray m_mode;
+    QLockFile m_lock;
+    int m_connections = 0;
     QLocalServer m_server;
 };
 

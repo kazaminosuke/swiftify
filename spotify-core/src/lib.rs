@@ -247,6 +247,8 @@ pub struct SpotifyCore {
     switching: Mutex<()>,
     opening_output: Mutex<()>,
     clock_revision: AtomicU64,
+    #[cfg(feature = "spotify")]
+    session_generation: AtomicU64,
     seek_generation: AtomicU64,
     spectrum: SharedSpectrum,
     dsp: SharedDsp,
@@ -281,6 +283,8 @@ impl SpotifyCore {
             switching: Mutex::new(()),
             opening_output: Mutex::new(()),
             clock_revision: AtomicU64::new(0),
+            #[cfg(feature = "spotify")]
+            session_generation: AtomicU64::new(0),
             seek_generation: AtomicU64::new(0),
             spectrum: SharedSpectrum::new(),
             dsp: SharedDsp::new(),
@@ -387,6 +391,7 @@ impl SpotifyCore {
         credentials: Credentials,
         client_id: String,
     ) -> Result<String, String> {
+        let generation = self.session_generation.fetch_add(1, Ordering::AcqRel).wrapping_add(1);
         let client_id = client_id.trim();
         if client_id.is_empty() {
             return Err("spotify client ID cannot be empty".to_owned());
@@ -433,14 +438,18 @@ impl SpotifyCore {
 
         // a request still waiting on the old player would keep it alive, and
         // its song would play beside whatever the new one plays
-        self.begin_playback_request();
-        let (previous, old_standby) = {
+        let (previous, old_standby, previous_session) = {
             let _switching = self.lock_switching();
+            if self.session_generation.load(Ordering::Acquire) != generation {
+                session.shutdown();
+                return Err(SUPERSEDED.to_owned());
+            }
+            self.begin_playback_request();
             let mut state = self.lock_state()?;
             mixer.set_volume((state.volume * VolumeCtrl::MAX_VOLUME as f32).round() as u16);
-            state.session = Some(session);
+            let previous_session = state.session.replace(session);
             state.mixer = Some(mixer);
-            (state.player.replace(player), state.standby_player.replace(standby))
+            (state.player.replace(player), state.standby_player.replace(standby), previous_session)
         };
         // drop outside the state lock because this may wait on the player thread
         if let Some(previous) = previous {
@@ -451,10 +460,16 @@ impl SpotifyCore {
             old_standby.player.stop();
         }
 
+        if let Some(previous_session) = previous_session {
+            previous_session.shutdown();
+        }
         Ok(login)
     }
 
     pub fn disconnect(&self) {
+        let switching = self.lock_switching();
+        #[cfg(feature = "spotify")]
+        self.session_generation.fetch_add(1, Ordering::AcqRel);
         self.begin_playback_request();
         self.clear_local_playback();
         #[cfg(not(feature = "spotify"))]
@@ -463,19 +478,22 @@ impl SpotifyCore {
         }
         #[cfg(feature = "spotify")]
         let players = self.lock_state().ok().map(|mut state| {
-            let players = (state.player.take(), state.standby_player.take());
-            state.session = None;
+            let players = (state.player.take(), state.standby_player.take(), state.session.take());
             state.mixer = None;
             state.local_sink = None;
             players
         });
+        drop(switching);
         #[cfg(feature = "spotify")]
-        if let Some((active, standby)) = players {
+        if let Some((active, standby, session)) = players {
             if let Some(active) = active {
                 active.player.pause();
             }
             if let Some(standby) = standby {
                 standby.player.pause();
+            }
+            if let Some(session) = session {
+                session.shutdown();
             }
         }
         self.spectrum.set_enabled(false);
@@ -1552,8 +1570,8 @@ impl SpotifyCore {
         Err(spotify_disabled())
     }
 
-    pub async fn play_track_as(&self, _: String, _: u64) -> Result<(), String> {
-        Err(spotify_disabled())
+    pub async fn play_track_as(&self, _: String, ticket: u64) -> Result<(), String> {
+        Err(if self.is_latest_request(ticket) { spotify_disabled() } else { SUPERSEDED.to_owned() })
     }
 
     pub async fn crossfade_track_as(&self, _: String, _: u32, _: u64) -> Result<(), String> {
@@ -1833,6 +1851,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg(feature = "spotify")]
     async fn a_replaced_request_gives_up_before_touching_the_outputs() {
         // two songs chosen in quick succession: the first one's request is
         // run after the second's was made, as two workers may run them

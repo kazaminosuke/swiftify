@@ -74,6 +74,7 @@ SpotifySession::SpotifySession(PlaybackCore *core, CredentialStore *credentials,
 #ifdef SWIFTIFY_HAS_SPOTIFY
     if (!m_enabled) return;
     connect(&m_oauth, &OAuthFlow::callbackReceived, this, [this](const QUrl &url) { detach(completeLogin(url)); });
+    connect(&m_oauth, &OAuthFlow::authorizationTimedOut, this, &SpotifySession::cancelLogin);
 
     // long enough for a browser to start from cold in the background (half
     // a minute, seen) and spotify to answer, short enough that a login
@@ -369,7 +370,7 @@ void SpotifySession::beginLibraryLogin()
 
 void SpotifySession::beginLogin(LoginPurpose purpose, const QStringList &scopes, const QString &clientId)
 {
-    if (!m_enabled) return;
+    if (!m_enabled || m_loggingOut) return;
     // the person's own login takes the place of one signing itself in again;
     // the other kind's, if it was that, goes after
     if (m_repairing) {
@@ -511,24 +512,20 @@ void SpotifySession::cancelLogin()
 
 void SpotifySession::logOut()
 {
-    if (!m_enabled) return;
+    if (!m_enabled || m_loggingOut) return;
     detach(logOutAsync());
 }
 
 QCoro::Task<> SpotifySession::logOutAsync()
 {
-    try {
-        co_await m_credentials->removeAll();
-    } catch (const SpotifyError &error) {
-        reportError(error.message());
-        qCWarning(lcSession) << "deleting saved spotify logins:" << error.message();
-        co_return;
-    }
-
+    m_loggingOut = true;
+    const auto complete = qScopeGuard([this] { m_loggingOut = false; });
     ++m_generation;
     cancelLogin();
     m_playbackRefresh.reset();
     m_libraryRefresh.reset();
+    m_oauth.cancel();
+    m_webApi.cancelRequests();
     // a fresh core, as the swift app builds one. anything still waiting on the
     // old one is cancelled.
     m_core->disconnectSession();
@@ -552,6 +549,13 @@ QCoro::Task<> SpotifySession::logOutAsync()
     setLibraryConnected(false, false);
     setEvaluatingStoredLogin(false);
     emit loggedOut();
+
+    try {
+        co_await m_credentials->removeAll();
+    } catch (const SpotifyError &error) {
+        reportError(error.message());
+        qCWarning(lcSession) << "could not remove the saved Spotify login";
+    }
 }
 
 // --- tokens and connections ----------------------------------------------------------
