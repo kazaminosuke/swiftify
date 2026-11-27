@@ -213,6 +213,9 @@ void YouTubeApiTest::understandsRetryAfterDatesAndSeconds()
     const QDateTime now = QDateTime::fromString(QStringLiteral("2026-11-27T12:00:00Z"), Qt::ISODate);
     QCOMPARE(retryAfterMs("9", now).value_or(-1), 9000);
     QCOMPARE(retryAfterMs("Fri, 27 Nov 2026 12:02:00 GMT", now).value_or(-1), 120000);
+    QCOMPARE(retryAfterMs("Friday, 27-Nov-26 12:02:00 GMT", now).value_or(-1), 120000);
+    QCOMPARE(retryAfterMs("Fri Nov 27 12:02:00 2026", now).value_or(-1), 120000);
+    QCOMPARE(retryAfterMs("Fri, 27 Nov 2026 11:59:59 GMT", now).value_or(-1), 0);
     QVERIFY(!retryAfterMs("could not parse", now).has_value());
 }
 
