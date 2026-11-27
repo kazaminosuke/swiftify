@@ -88,6 +88,11 @@ private:
         {
         }
 
+        QString playbackKey() const
+        {
+            return session.isEnabled() ? QStringLiteral("lastPlaybackState") : QStringLiteral("localPlaybackStateV1");
+        }
+
         /// lets the song the player asked for finish loading
         void finishLoading()
         {
@@ -142,8 +147,8 @@ private slots:
             rig.finishLoading();
             rig.core.duration = 200000;
             rig.player.seek(42000);
-            QTRY_VERIFY(rig.settings.contains(QStringLiteral("lastPlaybackState")));
-            QTRY_COMPARE(playbackstate::decode(rig.settings.value(QStringLiteral("lastPlaybackState")).toByteArray())->positionMs, 42000u);
+            QTRY_VERIFY(rig.settings.contains(rig.playbackKey()));
+            QTRY_COMPARE(playbackstate::decode(rig.settings.value(rig.playbackKey()).toByteArray())->positionMs, 42000u);
             QVERIFY(rig.player.isPlaying());
         }
         {
@@ -230,7 +235,7 @@ private slots:
             QCOMPARE(rig.core.position, 30000u);
             QVERIFY(QMetaObject::invokeMethod(&rig.session, "loggedOut"));
             QVERIFY(!rig.player.hasSong());
-            QVERIFY(!rig.settings.contains(QStringLiteral("lastPlaybackState")));
+            QVERIFY(!rig.settings.contains(rig.playbackKey()));
         }
         Rig next(path);
         QVERIFY(!next.player.hasSong());
@@ -882,6 +887,12 @@ private slots:
         rig.finishLoading();
         QSignalSpy loggedOut(&rig.session, &SpotifySession::loggedOut);
         rig.session.logOut();
+        if (!rig.session.isEnabled()) {
+            QCOMPARE(loggedOut.count(), 0);
+            QVERIFY(rig.player.isPlaying());
+            QCOMPARE(rig.player.activeQueue().size(), 2);
+            return;
+        }
         QTRY_COMPARE(loggedOut.count(), 1);
         QVERIFY(!rig.player.hasSong());
         QVERIFY(!rig.player.isPlaying());
