@@ -339,6 +339,26 @@ private:
     }
 
 private slots:
+    void droppingAnApiAndItsNetworkCancelsThePendingRequest()
+    {
+        auto network = std::make_unique<FakeAccounts>();
+        network->holding = true;
+        auto api = std::make_unique<WebApi>(network.get());
+        bool cancelled = false;
+        const auto fetch = [&]() -> QCoro::Task<> {
+            try {
+                co_await api->profile(QStringLiteral("dummy-token"));
+            } catch (const Cancelled &) {
+                cancelled = true;
+            }
+        };
+        detach(fetch());
+        QCOMPARE(network->apiCalls.size(), 1);
+        api.reset();
+        network.reset();
+        QTRY_VERIFY(cancelled);
+    }
+
     void disabledSessionLeavesSavedCredentialsUntouched()
     {
         class CountingStore : public MemoryCredentialStore {
