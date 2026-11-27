@@ -16,6 +16,15 @@ on:
   pull_request:
     paths:
       - .github/workflows/prebuilt.yml
+      - CMakeLists.txt
+      - src/main.cpp
+      - src/system/SingleInstance.*
+      - src/youtube/**
+      - qml/YouTubeWindow.qml
+      - resources/youtube/**
+      - tests/tst_youtube*.cpp
+      - tests/tst_googleauthorization.cpp
+      - tests/check_windows_build.ps1
       - tools/build-windows.ps1
       - tools/build-linux-tarball.sh
       - tools/build-macos-dmg.sh
@@ -54,14 +63,14 @@ jobs:
         with:
           version: 6.10.3
           arch: win64_msvc2022_64
-          modules: qtshadertools qtwebsockets
+          modules: qtshadertools qtwebsockets qtnetworkauth
           cache: true
 
       - name: build
         shell: pwsh
         run: >
           .\tools\build-windows.ps1 -QtPath $env:QT_ROOT_DIR
-          -BuildRoot "$env:RUNNER_TEMP\build"
+          -BuildRoot "$env:RUNNER_TEMP\build" -TestYouTube
           -InstallPrefix "$env:RUNNER_TEMP\${{ steps.version.outputs.name }}"
 
       # msvc's headers have the media controls, so a build without them is a bug
@@ -148,7 +157,7 @@ jobs:
             libpulse-dev libasound2-dev libssl-dev libsecret-1-dev \
             libgl1-mesa-dev libegl1-mesa-dev libxkbcommon-dev libxkbcommon-x11-0 \
             libfontconfig1-dev libfreetype-dev libdbus-1-dev \
-            libwayland-dev libwayland-egl1 libvulkan1 \
+            libwayland-dev libwayland-egl1 libvulkan-dev \
             libxcb-cursor0 libxcb-icccm4 libxcb-image0 libxcb-keysyms1 libxcb-randr0 \
             libxcb-render-util0 libxcb-shape0 libxcb-xinerama0 libxcb-xkb1 libxcb-xinput0
 
@@ -157,7 +166,7 @@ jobs:
           version: 6.12.0
           arch: linux_gcc_64
           # soloist talks to spotify's soloist over websockets
-          modules: qtshadertools qtwebsockets
+          modules: qtshadertools qtwebsockets qtnetworkauth
           cache: true
 
       # clang held to gcc 12's standard library, so it still runs on older
@@ -169,7 +178,7 @@ jobs:
           CXX: clang++-18
           CFLAGS: --gcc-install-dir=/usr/lib/gcc/x86_64-linux-gnu/12
           CXXFLAGS: --gcc-install-dir=/usr/lib/gcc/x86_64-linux-gnu/12
-        run: ./tools/build-linux-tarball.sh --qt "$QT_ROOT_DIR" --out dist
+        run: ./tools/build-linux-tarball.sh --qt "$QT_ROOT_DIR" --out dist --test-youtube
 
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
@@ -178,6 +187,7 @@ jobs:
           if-no-files-found: error
 
   macos:
+    if: github.event_name != 'pull_request'
     # apple silicon with xcode 27. the icon uses icon composer features xcode
     # 26's actool can't open. the image is still a preview
     runs-on: xcode-27

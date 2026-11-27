@@ -32,12 +32,14 @@ set -euo pipefail
 QT=""
 OUT="dist"
 JOBS="$(nproc 2>/dev/null || echo 4)"
+TEST_YOUTUBE=OFF
 
 while [[ $# -gt 0 ]]; do
     case $1 in
         --qt) QT="$2"; shift 2 ;;
         --out) OUT="$2"; shift 2 ;;
         --jobs) JOBS="$2"; shift 2 ;;
+        --test-youtube) TEST_YOUTUBE=ON; shift ;;
         -h|--help)
             sed -n '2,12p' "$0" | sed 's/^# \{0,1\}//'
             exit 0
@@ -111,8 +113,14 @@ build_dependency qcoro https://github.com/qcoro/qcoro.git v0.13.0 \
     -DUSE_QT_VERSION=6 -DQCORO_WITH_QTDBUS=OFF -DQCORO_WITH_QTWEBSOCKETS=OFF -DQCORO_WITH_QTQUICK=OFF \
     -DQCORO_WITH_QML=OFF -DQCORO_WITH_QTTEST=OFF -DQCORO_BUILD_EXAMPLES=OFF -DBUILD_TESTING=OFF
 
-cmake -S "$SOURCE" -B "$WORK/swiftify" "${common[@]}" -DCMAKE_INSTALL_PREFIX=/usr -DSWIFTIFY_BUNDLED_QT=ON
-cmake --build "$WORK/swiftify" --parallel "$JOBS"
+cmake -S "$SOURCE" -B "$WORK/swiftify" "${common[@]}" -DCMAKE_INSTALL_PREFIX=/usr \
+    -DSWIFTIFY_BUNDLED_QT=ON -DBUILD_TESTING="$TEST_YOUTUBE"
+cmake --build "$WORK/swiftify" --target swiftify --parallel "$JOBS"
+if [[ "$TEST_YOUTUBE" == ON ]]; then
+    cmake --build "$WORK/swiftify" --target tst_youtubeapi tst_googleauthorization tst_youtubeview --parallel "$JOBS"
+    ctest --test-dir "$WORK/swiftify" --output-on-failure --no-tests=error \
+        -R 'tst_(youtubeapi|googleauthorization|youtubeview)|translations_catalog|qml_statements|icon_names'
+fi
 rm -rf "${APPDIR:?}"
 DESTDIR="$APPDIR" cmake --install "$WORK/swiftify"
 
@@ -138,7 +146,8 @@ export LD_LIBRARY_PATH="$DEPS/lib:$QT/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 # LD_LIBRARY_PATH and drops a library it cannot find without a word
 PATH="$WORK/tools:$PATH" "$WORK/tools/linuxdeploy-x86_64.AppImage" \
     --appdir "$APPDIR" --executable "$APPDIR/usr/bin/swiftify" \
-    --library "$DEPS/lib/libqt6keychain.so.1" "${wayland[@]}" --plugin qt
+    --library "$DEPS/lib/libqt6keychain.so.1" --library "$QT/lib/libQt6NetworkAuth.so.6" \
+    "${wayland[@]}" --plugin qt
 
 # the tarball is the usr tree: bin, lib, plugins, qml and share. the fonts are
 # found from bin/../share and qt from bin/qt.conf, so it runs from anywhere
@@ -147,7 +156,7 @@ PATH="$WORK/tools:$PATH" "$WORK/tools/linuxdeploy-x86_64.AppImage" \
 [[ -f "$APPDIR/usr/plugins/tls/libqopensslbackend.so" ]] || fail "the openssl tls plugin is missing"
 [[ -f "$APPDIR/usr/share/licenses/swiftify/LICENSE" ]] || fail "the license is missing"
 for license in material-color-utilities.LICENSE rounded-polygon-qmljs.LICENSE material-symbols.LICENSE \
-    rust-crates.LICENSE qt.LICENSE qt.NOTICE qtkeychain.LICENSE qcoro.LICENSE; do
+    rust-crates.LICENSE qt.LICENSE qt.NOTICE qtkeychain.LICENSE qcoro.LICENSE YouTubeBrand.NOTICE; do
     [[ -f "$APPDIR/usr/share/licenses/swiftify/$license" ]] || fail "$license is missing"
 done
 

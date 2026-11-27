@@ -181,6 +181,26 @@ private slots:
         QVERIFY(library.sources().isEmpty());
     }
 
+    void opusFilesAppearInTheLibrary()
+    {
+        QTemporaryDir music;
+        QTemporaryDir storage;
+        QVERIFY(music.isValid());
+        QVERIFY(storage.isValid());
+        QVERIFY(QFile::copy(QFINDTESTDATA("../native-audio/tests/audio/two-tones.opus"),
+                            music.filePath(QStringLiteral("Ogg.opus"))));
+        QVERIFY(QFile::copy(QFINDTESTDATA("../native-audio/tests/audio/two-tones.webm"),
+                            music.filePath(QStringLiteral("WebM.webm"))));
+        Settings settings(storage.filePath(QStringLiteral("swiftify.conf")));
+        LocalLibrary library(&settings, nullptr, storage.path());
+        QCOMPARE(library.addSources({QUrl::fromLocalFile(music.path())}), 1);
+        QTRY_COMPARE(library.songs()->count(), 2);
+        for (const Song &song : library.songs()->songs()) {
+            QVERIFY(song.isLocalFile());
+            QVERIFY2(std::abs(song.durationMs - 1200) < 30, qPrintable(song.localPath()));
+        }
+    }
+
     void playlistsHoldCopiesOfTheirOwn()
     {
         QTemporaryDir music;
@@ -538,9 +558,9 @@ private slots:
                           {QStringLiteral("artist"), QStringLiteral("Roxy Music")},
                           {QStringLiteral("trackNumber"), QStringLiteral("9")}},
                          cover, false);
-        QVERIFY(saved.wait(5000));
+        QTRY_COMPARE_WITH_TIMEOUT(saved.count(), 1, 5000);
         QCOMPARE(saved.first().at(1).toBool(), true);
-        QVERIFY(scanned.wait(5000));
+        QTRY_VERIFY_WITH_TIMEOUT(!scanned.isEmpty(), 5000);
         const Song edited = songWithUri(library, uris[0]);
         QCOMPARE(edited.name, QStringLiteral("Avalon (Live)"));
         QCOMPARE(edited.artists, QStringLiteral("Roxy Music"));
@@ -556,9 +576,10 @@ private slots:
 
         // and the cover can go again
         saved.clear();
+        scanned.clear();
         library.editTags(uris[0], {}, {}, true);
-        QVERIFY(saved.wait(5000));
-        QVERIFY(scanned.wait(5000));
+        QTRY_COMPARE_WITH_TIMEOUT(saved.count(), 1, 5000);
+        QTRY_VERIFY_WITH_TIMEOUT(!scanned.isEmpty(), 5000);
         QVERIFY(songWithUri(library, uris[0]).artworkUrl.isEmpty());
 
         // a file the library does not hold is not touched
