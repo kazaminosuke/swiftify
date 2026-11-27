@@ -71,6 +71,16 @@ GoogleAuthorization::GoogleAuthorization(QString clientId, QString clientSecret,
     , m_clientSecret(clientSecret.trimmed())
 {
     protectAuthorizationLogs();
+    connect(m_network, &QNetworkAccessManager::finished, this, [this](QNetworkReply *reply) {
+        if (reply->url() != tokenEndpoint && reply->url() != revokeEndpoint) return;
+        const int status = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+        if (status == 429) {
+            const auto delay = retryAfterMs(reply->rawHeader("Retry-After")).value_or(60'000);
+            m_retryAfter.setRemainingTime(qMax(delay, qint64(1000)), Qt::PreciseTimer);
+        } else if (status == 403 && reply->url() == tokenEndpoint) {
+            m_permissionDenied = true;
+        }
+    });
     m_timeout.setSingleShot(true);
     connect(&m_timeout, &QTimer::timeout, this, [this] {
         invalidate(tr("The Google authorization request timed out. Sign in again."));
@@ -103,6 +113,12 @@ QByteArray GoogleAuthorization::accessToken() const
 void GoogleAuthorization::signIn()
 {
     if (!configured() || m_busy || m_granted) return;
+    if (m_permissionDenied || !m_retryAfter.hasExpired()) {
+        m_error = m_permissionDenied ? tr("Google denied authorization. Check your OAuth project configuration.")
+                                     : tr("Google is limiting authorization requests. Retry after the cooldown.");
+        emit changed();
+        return;
+    }
     clearFlow();
 
     auto *flow = new QOAuth2AuthorizationCodeFlow(m_network, this);
@@ -173,7 +189,14 @@ void GoogleAuthorization::signIn()
         emit changed();
     });
     connect(flow, &QAbstractOAuth::requestFailed, this, [this, flow](QAbstractOAuth::Error) {
-        if (m_flow == flow) invalidate(tr("Google sign-in or token refresh failed. Sign in again."));
+        if (m_flow != flow) return;
+        if (m_permissionDenied) {
+            invalidate(tr("Google denied authorization. Check your OAuth project configuration."));
+        } else if (!m_retryAfter.hasExpired()) {
+            invalidate(tr("Google is limiting authorization requests. Retry after the cooldown."));
+        } else {
+            invalidate(tr("Google sign-in or token refresh failed. Sign in again."));
+        }
     });
     connect(flow, &QAbstractOAuth2::serverReportedErrorOccurred, this,
             [this, flow](const QString &error, const QString &, const QUrl &) {
@@ -215,7 +238,7 @@ void GoogleAuthorization::disconnectAccount()
     auto *reply = boundReply(m_network->post(request, "token=" + QUrl::toPercentEncoding(token)),
                              maxOAuthReply, oauthRequestMs);
     connect(reply, &QNetworkReply::finished, this, [this, reply] {
-        if (reply->error() != QNetworkReply::NoError
+        if (reply->error() != QNetworkReply::NoError || replyLimit(*reply, maxOAuthReply) != ReplyLimit::None
             || reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt() != 200) {
             m_error = tr("Signed out locally. Google did not confirm revocation. Check your Google Account connections.");
         } else {
@@ -229,7 +252,8 @@ void GoogleAuthorization::disconnectAccount()
 
 bool GoogleAuthorization::refreshIfExpired()
 {
-    if (!m_granted || !m_flow || !accessToken().isEmpty() || m_flow->refreshToken().isEmpty()) return false;
+    if (!m_granted || !m_flow || !accessToken().isEmpty() || m_flow->refreshToken().isEmpty()
+        || m_permissionDenied || !m_retryAfter.hasExpired()) return false;
     if (!m_busy) m_flow->refreshTokens();
     return m_busy;
 }

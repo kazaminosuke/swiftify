@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #pragma once
 
+#include <QDeadlineTimer>
 #include <QObject>
 #include <QString>
 #include <QTimer>
@@ -47,6 +48,8 @@ private:
     QOAuthHttpServerReplyHandler *m_handler = nullptr;
     QTimer m_timeout;
     QTimer m_expiration;
+    QDeadlineTimer m_retryAfter{0};
+    bool m_permissionDenied = false;
     bool m_busy = false;
     bool m_waitingForGrant = false;
     bool m_granted = false;
