@@ -29,6 +29,7 @@
 #include "spotify/SpotifyError.h"
 #include "spotify/SpotifySession.h"
 #if defined(SWIFTIFY_HAS_DBUS) && defined(Q_OS_LINUX)
+#include "audio/AudioShaping.h"
 #include "system/dbus/Mpris.h"
 #endif
 
@@ -908,7 +909,8 @@ private slots:
     void mprisReflectsPlaybackStateAndControls()
     {
         Rig rig;
-        Mpris mpris(&rig.player);
+        AudioShaping sound(&rig.core, &rig.settings, &rig.session);
+        Mpris mpris(&rig.player, &sound);
         QCOMPARE(mpris.playbackStatus(), QStringLiteral("Stopped"));
         QVERIFY(!mpris.hasSong());
 
@@ -923,6 +925,10 @@ private slots:
         const QVariantMap metadata = mpris.metadata();
         QCOMPARE(metadata.value(QStringLiteral("xesam:title")).toString(), queue[0].name);
         QCOMPARE(metadata.value(QStringLiteral("xesam:artist")).toStringList(), QStringList {queue[0].artists});
+        QVERIFY(!metadata.contains(QStringLiteral("xesam:url")));
+        mpris.setPlaybackRate(1.25);
+        QCOMPARE(sound.tempo(), 1.25);
+        QCOMPARE(mpris.playbackRate(), 1.25);
 
         rig.player.pause();
         QCOMPARE(mpris.playbackStatus(), QStringLiteral("Paused"));

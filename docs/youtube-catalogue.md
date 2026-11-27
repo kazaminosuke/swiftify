@@ -9,7 +9,7 @@ instance. Launch it with `swiftify` or use a playback shortcut such as
 For guest search,
 set `SWIFTIFY_YOUTUBE_API_KEY` in the process environment using your own
 configured project. For account collections provide the desktop application's
-`SWIFTIFY_GOOGLE_CLIENT_ID` and, when required, `SWIFTIFY_GOOGLE_CLIENT_SECRET`.
+`SWIFTIFY_GOOGLE_CLIENT_ID` and `SWIFTIFY_GOOGLE_CLIENT_SECRET`.
 The account flow runs only when a user starts it and completes Google sign-in.
 Browser use is limited to authentication and attribution or policy links.
 
