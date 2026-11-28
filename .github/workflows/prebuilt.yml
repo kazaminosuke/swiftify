@@ -20,11 +20,7 @@ on:
       - CMakeLists.txt
       - src/main.cpp
       - src/system/SingleInstance.*
-      - src/youtube/**
-      - qml/YouTubeWindow.qml
-      - resources/youtube/**
-      - tests/tst_youtube*.cpp
-      - tests/tst_googleauthorization.cpp
+      - translations/**
       - tests/check_windows_build.ps1
       - tools/build-windows.ps1
       - tools/build-linux-tarball.sh
@@ -76,7 +72,7 @@ jobs:
         shell: pwsh
         run: >
           .\tools\build-windows.ps1 -QtPath $env:QT_ROOT_DIR
-          -BuildRoot "$env:RUNNER_TEMP\build" -TestYouTube
+          -BuildRoot "$env:RUNNER_TEMP\build" -Test
           -InstallPrefix "$env:RUNNER_TEMP\${{ steps.version.outputs.name }}"
 
       # msvc's headers have the media controls, so a build without them is a bug
@@ -180,7 +176,7 @@ jobs:
           version: 6.12.1
           arch: linux_gcc_64
           # Soloist uses WebSockets, which the local-only build does not need.
-          modules: qtshadertools qtnetworkauth qttasktree ${{ matrix.spotify == 'enabled' && 'qtwebsockets' || '' }}
+          modules: qtshadertools qttasktree ${{ matrix.spotify == 'enabled' && 'qtwebsockets' || '' }}
           cache: true
 
       # clang held to gcc 12's standard library, so it still runs on older
