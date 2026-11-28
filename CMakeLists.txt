@@ -19,7 +19,7 @@
 cmake_minimum_required(VERSION 3.24)
 
 project(Swiftify
-    VERSION 0.26.0
+    VERSION 0.26.2
     DESCRIPTION "A native Spotify client"
     LANGUAGES C CXX)
 
@@ -326,7 +326,7 @@ qt_add_resources(swiftify_app "swiftify_translations"
     FILES translations/ru.json translations/de.json)
 qt_add_qml_module(swiftify_app
     URI Swiftify
-    VERSION 1.0
+    VERSION 0.26.2
     SOURCES ${SWIFTIFY_SOURCES}
     QML_FILES ${SWIFTIFY_QML}
     RESOURCES ${SWIFTIFY_QML_RESOURCES}
