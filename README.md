@@ -36,8 +36,10 @@ For a local build without Spotify, configure CMake with
 integration. The local build keeps music playback, EQ, ReplayGain, playlists
 and synchronized lyrics, and excludes librespot, Spotify authentication,
 Spotify Soloist and their dedicated Qt dependencies. For a portable Linux
-package, use `tools/build-linux-tarball.sh --qt <kit> --without-spotify` or
-select the release archive whose name ends in `-local.tar.gz`.
+package, use `tools/build-linux-tarball.sh --qt <kit> --without-spotify`.
+The fork's `integration` branch is used for development and trial builds.
+See the [CachyOS trial guide](docs/cachyos-trial.md) for the Actions artifact
+and instructions.
 
 When enabled at build time, the native YouTube catalogue opens with
 `swiftify --youtube`. See the [catalogue setup](docs/youtube-catalogue.md).

@@ -141,6 +141,27 @@ private slots:
         QCOMPARE(core.generation(), original + 2);
     }
 
+    void pendingLoadCanFinishAfterPlayerShutdown()
+    {
+        QTemporaryDir directory;
+        Settings settings(directory.filePath(QStringLiteral("settings.ini")));
+        ErrorCenter errors(nullptr);
+        QNetworkAccessManager network;
+        FakeCore core;
+        SpotifySession session(&core, nullptr, &network, &errors, nullptr, false);
+        std::shared_ptr<testing::PendingCall> load;
+        {
+            PlaybackController player(&core, &session, &settings, &errors);
+            const auto song = makeSong(QStringLiteral("local"));
+            player.play(song, {song});
+            QTRY_VERIFY(!core.pending.isEmpty());
+            load = core.take(QStringLiteral("playFile"));
+            QVERIFY(load);
+        }
+        load->succeed();
+        QTRY_VERIFY(core.sounding);
+    }
+
     void lastTrackQueueAndPositionSurviveRestartWithoutStartingSound()
     {
         QTemporaryDir directory;
