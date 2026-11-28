@@ -27,3 +27,17 @@ future features.
 
 - 2026-11-20 19:05. Official App Server returned HTTP 401 after the codec stage.
   No remaining-usage percentage was available.
+
+## Track-specific manual correction
+
+The existing timing controls save the displayed total correction for the
+current track. Repeated entries for the same track use the same correction
+after a restart. Track settings use the song URI as the identity, hashed
+for storage. Moving a local file to a new URI creates a new identity.
+Tracks without an override use the old global `lyricsDelayMs` setting.
+Reset sets the current track to 0 ms. Buttons adjust in steps of 25 ms.
+
+Line highlighting and line seek use the same correction. The Qt poll
+interval and device latency still limit overall timing accuracy.
+The [MusicBeatSP review](musicbeatsp-source-review.md) traces its manual
+offset, timestamp editor, report-steered clock and cue formats.

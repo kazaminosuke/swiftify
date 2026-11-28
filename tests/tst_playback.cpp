@@ -697,11 +697,49 @@ private slots:
         QTRY_COMPARE_WITH_TIMEOUT(rig.player.activeLyricIndex(), 1, 2000);
         rig.player.setLyricsDelayMs(1000);
         QCOMPARE(rig.player.activeLyricIndex(), 0);
-        QCOMPARE(rig.settings.value(QStringLiteral("lyricsDelayMs")).toInt(), 1000);
         rig.player.seekToLyricLine(1);
         QCOMPARE(rig.core.position, 6000u);
         QCOMPARE(rig.player.activeLyricIndex(), 1);
+    }
 
+    void lyricOffsetsFollowTheTrackAcrossRestartsAndQueueEntries()
+    {
+        QTemporaryDir directory;
+        QVERIFY(directory.isValid());
+        const QString path = directory.filePath(QStringLiteral("swiftify.conf"));
+        const Song first = makeSong(QStringLiteral("first"));
+        const Song second = makeSong(QStringLiteral("second"));
+        const Song repeated = first.freshInstance();
+        const QList<Song> queue {first, second, repeated};
+        {
+            Settings settings(path);
+            settings.setValue(QStringLiteral("lyricsDelayMs"), -125);
+            settings.sync();
+        }
+        {
+            Rig rig(path);
+            rig.player.play(first, queue);
+            rig.finishLoading();
+            QCOMPARE(rig.player.lyricsDelayMs(), -125);
+            rig.player.setLyricsDelayMs(75);
+
+            rig.player.play(second, queue);
+            rig.finishLoading();
+            QCOMPARE(rig.player.lyricsDelayMs(), -125);
+            rig.player.setLyricsDelayMs(0);
+
+            rig.player.play(repeated, queue);
+            rig.finishLoading();
+            QCOMPARE(rig.player.lyricsDelayMs(), 75);
+        }
+        {
+            Rig rig(path);
+            QCOMPARE(rig.player.lyricsDelayMs(), 75);
+            rig.player.play(second, queue);
+            rig.finishLoading();
+            QCOMPARE(rig.player.lyricsDelayMs(), 0);
+            QCOMPARE(rig.settings.value(QStringLiteral("lyricsDelayMs")).toInt(), -125);
+        }
     }
 
     void missingLyricsShowThePhrase()

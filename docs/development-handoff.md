@@ -1,5 +1,82 @@
 # YouTube Music fork handoff
 
+## 2026-11-26 synchronization
+
+Fork `main` fast-forwarded from `21e6d0e` to `51dd3ef` with the original
+upstream commits. `49767c3` corrects texture sizing and filtering during
+Qt Quick zoom and contains the related scene and artwork updates.
+`8eb91fe` merges that change. `0a3f595` sets version 0.26.0. `51dd3ef`
+adds an opt-in release for manual prebuilt workflow runs. There was no
+dependency major upgrade or playback/DSP change in this upstream range.
+[Upstream range](https://github.com/swiftify-org/swiftify/compare/21e6d0e...51dd3ef)
+
+All ten PR heads incorporate the new upstream through normal merge
+commits. #1 → #2 → #3 → #4 → #8 is the catalogue stack. #5 → #6 is the
+audio base, with #7 as the lyrics branch and #9 → #10 as the media/device
+branch. The catalogue PR is now based on #4. It keeps typed catalog
+search and native playlist browsing, restores the #4 packaging checks
+and shares startup infrastructure with the existing playback window.
+[#11](https://github.com/kazaminosuke/swiftify/pull/11) follows #10 and
+[#12](https://github.com/kazaminosuke/swiftify/pull/12) follows #7.
+All twelve PRs remain open as drafts. [Open drafts](https://github.com/kazaminosuke/swiftify/pulls)
+
+### Code review follow-up
+
+The previous review text was not present in the PR review threads or fork
+work records inspected. The items supplied for this session were checked
+against the current code and tests.
+
+| Finding | Status |
+| --- | --- |
+| Audio routes and clock | The Qt/Spotify core and standalone CPAL player share format and device adapters. The render lifecycles are separate. The Qt local counter advances as PCM is decoded into output blocks. The standalone clock tracks submitted and estimated presentation frames with a revision. These cannot yet be treated as the same time source. |
+| Fixed sample rate | The Spotify and local DSP paths already supply normalized stereo 44.1 kHz blocks. Live input was using those EQ coefficients at other rates. #11 calibrates input rate and channel state and bypasses out-of-band bands. |
+| Provider I/O and seek | #11 signals cancellation before joining a stopped or replaced decoder and distinguishes read/seek I/O failures from decoder seek failures. Verification covers cancellation of a blocked cooperative reader, rejected opens, successful seek and natural EOF. Opening and probing still need a control worker for slow inputs. |
+| WebM | #6 already supplies single-track segment duration. #11 uses codec metadata to select Opus or Vorbis and tests decoding, duration and seek with generated clips. Exact multitrack audio duration and padding still need fixtures. |
+| Output | #10 supports standalone device selection. #11 propagates CPAL loss to Qt's existing pause and explicit resume flow. Paused-seek callbacks cannot consume the replacement source before resume. Physical removal, backend buffer latency and device selection in Qt remain open. |
+| Catalogue overlap and startup | #8 is stacked on #4. Instance routing, scrolling, settings, translation and QML startup wiring are shared. The playback shortcuts reach the player and the catalogue retains its own window. |
+| Lyrics | The track correction is persisted independently from the fallback setting. QML uses the same correction for highlighting and seeks. The 25 ms control step is finer than the timing guarantees of the Qt playback poll. |
+| CI | #8 carries forward Linux and Windows packaging and catalogue checks. #11 adds the full C ABI/core tests and native Clippy. GitHub rejected current manual workflow execution with HTTP 422 because Actions is disabled for the repository. |
+
+### Current verification
+
+- Linux Rust 1.100.0. The engine passed 10 unit tests, an Ogg/WebM codec
+  test and three ALSA null-device tests. Formatting and native Clippy passed.
+  The core C ABI library suite passed 76 tests with one opt-in benchmark ignored.
+- Qt 6.10.3 on Linux. The combined catalogue and audio stacks passed the
+  playback, local library, catalogue, OAuth, QML, translation and icon
+  checks. The full Xvfb CTest run passed 22 of 23 suites. The four
+  `filledIconsHaveNoHoles` data rows and
+  `aNarrowWindowClosesItsRightPanels` failed with identical messages on
+  upstream `51dd3ef` in the same X11/Qt environment. The upstream comparison
+  built without the QML cache generator. The earlier offscreen run also
+  failed to initialize a GL context for `tst_views`. Both app modes opened
+  offscreen and repeat launches forwarded to their own instance. Linux
+  desktop integration was disabled for this build. Staged installation
+  contained the GPL, Qt and YouTube notices and the Rust notice for
+  Symphonia Vorbis 0.6.1.
+- A C ABI probe played generated Vorbis/WebM with EQ and 1.25× tempo.
+  It confirmed duration, a paused seek that holds its position, resume
+  and explicit output restart through ALSA in five consecutive runs.
+  Actual Google consent,
+  Windows/macOS, hardware output changes and acoustic lyric latency
+  remain unverified.
+
+### Next integration boundary
+
+Retain one output lifecycle for local and future authorized streams.
+Expose a coherent Rust presentation snapshot and a revision through the
+current C ABI before interpolating in QML. Rate changes and DSP buffering
+need frame-to-media-time mapping. Test cancellation and seek rollback with
+a bounded authorized transport before integrating remote audio. The
+[MusicBeatSP source review](musicbeatsp-source-review.md) maps the lyrics,
+audio, queue and provider work and lists the relevant code and model terms.
+
+### Codex usage
+
+Official App Server `account/rateLimits/read` returned HTTP 401 at
+startup and on repeat checks, including 20:34, 20:40, 20:45, 20:53, 20:58 and 21:07 JST.
+No remaining percentage was available.
+
 ## Drafts and dependencies
 
 Drafts [#1–#4](https://github.com/kazaminosuke/swiftify/pulls) remain available

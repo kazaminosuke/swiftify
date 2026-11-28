@@ -68,7 +68,7 @@ Item {
             Accessible.name: text
             enabled: Player.lyricsDelayMs > -10000
             autoRepeat: true
-            onClicked: Player.lyricsDelayMs -= 100
+            onClicked: Player.lyricsDelayMs -= 25
         }
         StyledText {
             anchors.verticalCenter: parent.verticalCenter
@@ -85,7 +85,7 @@ Item {
             Accessible.name: text
             enabled: Player.lyricsDelayMs < 10000
             autoRepeat: true
-            onClicked: Player.lyricsDelayMs += 100
+            onClicked: Player.lyricsDelayMs += 25
         }
         IconButton {
             scheme: root.scheme
