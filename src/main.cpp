@@ -272,8 +272,7 @@ int main(int argc, char *argv[])
     const QStringList arguments = QCoreApplication::arguments();
     const QString command = SingleInstance::commandFrom(arguments);
 #ifdef SWIFTIFY_HAS_YOUTUBE_CLIENT
-    const bool catalogueMode = !arguments.contains(QStringLiteral("--spotify"))
-        && (arguments.contains(QStringLiteral("--youtube")) || command == QLatin1StringView("raise"));
+    const bool catalogueMode = arguments.contains(QStringLiteral("--youtube"));
 #else
     const bool catalogueMode = false;
 #endif
@@ -335,6 +334,13 @@ int main(int argc, char *argv[])
     }
 #endif
 
+    bool spotifyEnabled = false;
+#ifdef SWIFTIFY_HAS_SPOTIFY
+    spotifyEnabled = !arguments.contains(QStringLiteral("--disable-spotify"))
+        && (arguments.contains(QStringLiteral("--enable-spotify"))
+            || arguments.contains(QStringLiteral("--spotify"))
+            || qEnvironmentVariableIntValue("SWIFTIFY_ENABLE_SPOTIFY") == 1);
+#endif
     ErrorCenter errors(nullptr);
     QNetworkAccessManager network;
     RustCore rustCore;
@@ -342,8 +348,10 @@ int main(int argc, char *argv[])
     // spotify's songs through soloist when it is installed and has a key, with
     // the rust core keeping the login, lyrics and local files
     std::unique_ptr<SoloistCore> soloistCore;
-    if (auto soloist = SoloistCore::detect()) {
-        soloistCore = std::make_unique<SoloistCore>(&rustCore, std::move(*soloist));
+    if (spotifyEnabled) {
+        if (auto soloist = SoloistCore::detect()) {
+            soloistCore = std::make_unique<SoloistCore>(&rustCore, std::move(*soloist));
+        }
     }
     PlaybackCore &core = soloistCore ? static_cast<PlaybackCore &>(*soloistCore) : rustCore;
 #else
@@ -352,17 +360,23 @@ int main(int argc, char *argv[])
     // what playback connects with: the streaming quality, and how much of
     // what it streams is kept so a song played again needs no download
     const auto applyStreaming = [&] {
+        if (!spotifyEnabled) return;
         core.setStreamQuality(settings.streamingQuality());
-        core.setVolumeNormalization(settings.normalizeVolume());
         core.setAudioCache(paths::cacheDirectory() + QStringLiteral("/songs"),
                            qint64(settings.songCacheMegabytes()) * 1000 * 1000);
     };
     applyStreaming();
     QObject::connect(&settings, &Settings::streamingQualityChanged, &core, applyStreaming);
-    QObject::connect(&settings, &Settings::normalizeVolumeChanged, &core, applyStreaming);
     QObject::connect(&settings, &Settings::songCacheMegabytesChanged, &core, applyStreaming);
-    KeychainCredentialStore credentials;
-    SpotifySession session(&core, &credentials, &network, &errors);
+    // ReplayGain is shared with local playback, including local-only builds.
+    const auto applyNormalization = [&] { core.setVolumeNormalization(settings.normalizeVolume()); };
+    applyNormalization();
+    QObject::connect(&settings, &Settings::normalizeVolumeChanged, &core, applyNormalization);
+    std::unique_ptr<CredentialStore> credentials;
+#ifdef SWIFTIFY_HAS_SPOTIFY
+    if (spotifyEnabled) credentials = std::make_unique<KeychainCredentialStore>();
+#endif
+    SpotifySession session(&core, credentials.get(), &network, &errors, nullptr, spotifyEnabled);
     PlaybackController player(&core, &session, &settings, &errors);
     DiscordPresence discord(&player, &settings);
     LibraryStore library(&session, &settings, &errors);
@@ -370,6 +384,7 @@ int main(int argc, char *argv[])
     AudioShaping sound(&core, &settings, &session);
     LocalLibrary localFiles(&settings);
     library.attachLocalFiles(&localFiles);
+    if (!spotifyEnabled) library.showLocalFiles();
     // a song whose tags were edited shows as it is now wherever it is queued
     QObject::connect(&localFiles, &LocalLibrary::scanned, &player,
                      [&] { player.refreshSongDetails(localFiles.allSongs()); });

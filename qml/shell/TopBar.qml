@@ -49,6 +49,7 @@ Item {
     }
 
     function openCatalogueSearch() {
+        if (!Session.enabled) return
         if (Library.page !== Library.Page.Search) {
             Library.showSearch();
         }

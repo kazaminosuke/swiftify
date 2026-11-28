@@ -25,6 +25,7 @@ use std::{
     time::{Duration, Instant},
 };
 
+#[cfg(feature = "spotify")]
 use librespot::{
     core::{
         SpotifyId, SpotifyUri, authentication::Credentials, cache::Cache, config::SessionConfig,
@@ -38,21 +39,28 @@ use librespot::{
     },
     protocol::authentication::AuthenticationType,
 };
+#[cfg(feature = "spotify")]
 use serde::Serialize;
-use tokio::{sync::watch, time::timeout};
+use tokio::sync::watch;
+#[cfg(feature = "spotify")]
+use tokio::time::timeout;
 
+#[cfg(feature = "spotify")]
 mod artist;
 mod dsp;
 mod file_playback;
 pub mod live_input;
 pub mod local;
 mod output;
+#[cfg(feature = "spotify")]
 mod playlist;
 mod spectrum;
 
 use dsp::{EQ_BAND_COUNT, SharedDsp};
 use rodio::Source;
-use spectrum::{OutputHealth, SharedSpectrum, SpectrumSink};
+use spectrum::{OutputHealth, SharedSpectrum};
+#[cfg(feature = "spotify")]
+use spectrum::SpectrumSink;
 
 #[cfg(feature = "capi")]
 pub mod capi;
@@ -70,14 +78,21 @@ pub fn core_version() -> String {
 }
 
 struct SpotifyState {
+    #[cfg(feature = "spotify")]
     session: Option<Session>,
+    #[cfg(feature = "spotify")]
     player: Option<PlayerSlot>,
+    #[cfg(feature = "spotify")]
     standby_player: Option<PlayerSlot>,
+    #[cfg(feature = "spotify")]
     mixer: Option<Arc<dyn Mixer>>,
     volume: f32,
+    #[cfg(feature = "spotify")]
     stream_bitrate: Bitrate,
+    #[cfg(feature = "spotify")]
     volume_normalization: bool,
     /// where streamed songs are kept, and the most it may hold in bytes
+    #[cfg(feature = "spotify")]
     audio_cache: Option<(String, u64)>,
     local_playback: Option<file_playback::LocalPlayback>,
     /// Device and control thread owned by this core, also used for live PCM.
@@ -89,13 +104,20 @@ struct SpotifyState {
 impl Default for SpotifyState {
     fn default() -> Self {
         Self {
+            #[cfg(feature = "spotify")]
             session: None,
+            #[cfg(feature = "spotify")]
             player: None,
+            #[cfg(feature = "spotify")]
             standby_player: None,
+            #[cfg(feature = "spotify")]
             mixer: None,
             volume: 0.75,
+            #[cfg(feature = "spotify")]
             stream_bitrate: Bitrate::default(),
+            #[cfg(feature = "spotify")]
             volume_normalization: false,
+            #[cfg(feature = "spotify")]
             audio_cache: None,
             local_playback: None,
             local_sink: None,
@@ -104,25 +126,30 @@ impl Default for SpotifyState {
     }
 }
 
+#[cfg(feature = "spotify")]
 #[derive(Clone)]
 struct PlayerSlot {
+    #[cfg(feature = "spotify")]
     player: Arc<Player>,
     gain: Arc<AtomicU64>,
     active: Arc<AtomicBool>,
     normalisation: bool,
 }
 
+#[cfg(feature = "spotify")]
 impl PlayerSlot {
     fn set_gain(&self, gain: f64) {
         self.gain.store(gain.clamp(0.0, 1.0).to_bits(), Ordering::Relaxed);
     }
 }
 
+#[cfg(feature = "spotify")]
 struct PlayerVolume {
     base: Box<dyn VolumeGetter + Send>,
     gain: Arc<AtomicU64>,
 }
 
+#[cfg(feature = "spotify")]
 impl VolumeGetter for PlayerVolume {
     fn attenuation_factor(&self) -> f64 {
         self.base.attenuation_factor()
@@ -265,6 +292,7 @@ impl SpotifyCore {
         }
     }
 
+    #[cfg(feature = "spotify")]
     fn player_config(bitrate: Bitrate, normalisation: bool) -> PlayerConfig {
         PlayerConfig {
             position_update_interval: Some(Duration::from_secs(1)),
@@ -274,6 +302,7 @@ impl SpotifyCore {
         }
     }
 
+    #[cfg(feature = "spotify")]
     fn make_player_slot(
         &self,
         session: &Session,
@@ -313,6 +342,7 @@ impl SpotifyCore {
         }
     }
 
+    #[cfg(feature = "spotify")]
     pub async fn connect(&self, access_token: String, client_id: String) -> Result<(), String> {
         self.connect_returning_login(access_token, client_id)
             .await
@@ -323,6 +353,7 @@ impl SpotifyCore {
     /// log in with again without a token (librespot's reusable credentials),
     /// as json. keeping it means reconnecting never spends the oauth refresh
     /// token, which spotify rotates and revokes once an old one is reused
+    #[cfg(feature = "spotify")]
     pub async fn connect_returning_login(
         &self,
         access_token: String,
@@ -337,6 +368,7 @@ impl SpotifyCore {
 
     /// connects with a login `connect_returning_login` gave, and completes
     /// with the one to keep from then on
+    #[cfg(feature = "spotify")]
     pub async fn connect_stored(&self, login: String, client_id: String) -> Result<String, String> {
         let credentials: Credentials = serde_json::from_str(&login)
             .map_err(|error| format!("the saved playback login is damaged: {error}"))?;
@@ -349,6 +381,7 @@ impl SpotifyCore {
         self.connect_with(credentials, client_id).await
     }
 
+    #[cfg(feature = "spotify")]
     async fn connect_with(
         &self,
         credentials: Credentials,
@@ -424,6 +457,11 @@ impl SpotifyCore {
     pub fn disconnect(&self) {
         self.begin_playback_request();
         self.clear_local_playback();
+        #[cfg(not(feature = "spotify"))]
+        if let Ok(mut state) = self.lock_state() {
+            state.local_sink = None;
+        }
+        #[cfg(feature = "spotify")]
         let players = self.lock_state().ok().map(|mut state| {
             let players = (state.player.take(), state.standby_player.take());
             state.session = None;
@@ -431,6 +469,7 @@ impl SpotifyCore {
             state.local_sink = None;
             players
         });
+        #[cfg(feature = "spotify")]
         if let Some((active, standby)) = players {
             if let Some(active) = active {
                 active.player.pause();
@@ -487,6 +526,7 @@ impl SpotifyCore {
     }
 
     /// checks if the librespot session can still be used
+    #[cfg(feature = "spotify")]
     pub fn session_is_valid(&self) -> bool {
         let state = match self.lock_state() {
             Ok(state) => state,
@@ -524,43 +564,46 @@ impl SpotifyCore {
         self.clear_local_playback();
         self.lock_state()?.local_sink = None;
 
-        let (session, mixer, stream_bitrate, volume_normalization) = {
-            let state = self.lock_state()?;
-            (
-                state.session.clone(),
-                state.mixer.clone(),
-                state.stream_bitrate,
-                state.volume_normalization,
-            )
-        };
-        let (Some(session), Some(mixer)) = (session, mixer) else {
-            // nothing streaming to rebuild. the file sink above is enough.
-            return Ok(());
-        };
+        #[cfg(feature = "spotify")]
+        {
+            let (session, mixer, stream_bitrate, volume_normalization) = {
+                let state = self.lock_state()?;
+                (
+                    state.session.clone(),
+                    state.mixer.clone(),
+                    state.stream_bitrate,
+                    state.volume_normalization,
+                )
+            };
+            let (Some(session), Some(mixer)) = (session, mixer) else {
+                // nothing streaming to rebuild. the file sink above is enough.
+                return Ok(());
+            };
 
-        // drop outside the state lock because a stalled output may take time
-        // to stop. stopped, not paused: a request still waiting on it keeps it
-        // alive a little longer, and a paused load would start if played
-        let previous = {
+            // drop outside the state lock because a stalled output may take time
+            // to stop. stopped, not paused: a request still waiting on it keeps it
+            // alive a little longer, and a paused load would start if played
+            let previous = {
+                let mut state = self.lock_state()?;
+                (state.player.take(), state.standby_player.take())
+            };
+            if let Some(previous) = previous.0 {
+                previous.player.stop();
+                drop(previous);
+            }
+            if let Some(previous) = previous.1 {
+                previous.player.stop();
+                drop(previous);
+            }
+
+            let player_config = Self::player_config(stream_bitrate, volume_normalization);
+            let player = self.make_player_slot(&session, &mixer, player_config.clone(), true, 1.0);
+            let standby = self.make_player_slot(&session, &mixer, player_config, false, 0.0);
             let mut state = self.lock_state()?;
-            (state.player.take(), state.standby_player.take())
-        };
-        if let Some(previous) = previous.0 {
-            previous.player.stop();
-            drop(previous);
+            state.player = Some(player);
+            state.standby_player = Some(standby);
+            self.reset_timeline();
         }
-        if let Some(previous) = previous.1 {
-            previous.player.stop();
-            drop(previous);
-        }
-
-        let player_config = Self::player_config(stream_bitrate, volume_normalization);
-        let player = self.make_player_slot(&session, &mixer, player_config.clone(), true, 1.0);
-        let standby = self.make_player_slot(&session, &mixer, player_config, false, 0.0);
-        let mut state = self.lock_state()?;
-        state.player = Some(player);
-        state.standby_player = Some(standby);
-        self.reset_timeline();
         Ok(())
     }
 
@@ -581,6 +624,7 @@ impl SpotifyCore {
         *self.playback_generation.borrow() == ticket
     }
 
+    #[cfg(feature = "spotify")]
     pub async fn play_track(&self, spotify_uri: String) -> Result<(), String> {
         let ticket = self.begin_playback_request();
         self.play_track_as(spotify_uri, ticket).await
@@ -589,6 +633,7 @@ impl SpotifyCore {
     /// plays a streamed track for the request numbered `ticket`
     /// (begin_playback_request). a newer request ends it with SUPERSEDED, at
     /// once and without touching the outputs if it has not switched them yet.
+    #[cfg(feature = "spotify")]
     pub async fn play_track_as(&self, spotify_uri: String, ticket: u64) -> Result<(), String> {
         let uri = Self::parse_playable_uri(&spotify_uri)?;
         let mut newer = self.playback_generation.subscribe();
@@ -645,6 +690,7 @@ impl SpotifyCore {
 
     /// prepares the active player and, when crossfade is enabled, the standby
     /// player so the next track is ready for a normal start or a handoff.
+    #[cfg(feature = "spotify")]
     pub fn preload_track(&self, spotify_uri: String, preload_standby: bool) -> Result<(), String> {
         let uri = Self::parse_playable_uri(&spotify_uri)?;
         let normalisation = self.volume_normalization();
@@ -663,6 +709,7 @@ impl SpotifyCore {
 
     /// loads the next song on the standby player's output and starts an
     /// equal-power fade between the two players once it is ready.
+    #[cfg(feature = "spotify")]
     pub async fn crossfade_track_as(
         self: &Arc<Self>,
         spotify_uri: String,
@@ -772,6 +819,7 @@ impl SpotifyCore {
         Ok(())
     }
 
+    #[cfg(feature = "spotify")]
     pub fn load_track(&self, spotify_uri: String) -> Result<(), String> {
         self.clear_local_playback();
         let uri = Self::parse_playable_uri(&spotify_uri)?;
@@ -792,8 +840,13 @@ impl SpotifyCore {
             sink.play();
             return Ok(());
         }
-        self.player()?.play();
-        Ok(())
+        #[cfg(feature = "spotify")]
+        {
+            self.player()?.play();
+            Ok(())
+        }
+        #[cfg(not(feature = "spotify"))]
+        Err(spotify_disabled())
     }
 
     /// pauses both outputs, not only the one in use: a stream still loading
@@ -801,9 +854,17 @@ impl SpotifyCore {
     /// and play over it
     pub fn pause(&self) -> Result<(), String> {
         let local = self.local_active()?;
+        #[cfg(feature = "spotify")]
         let (active, standby, sink) = {
             let state = self.lock_state()?;
             (state.player.clone(), state.standby_player.clone(), state.local_sink.clone())
+        };
+        #[cfg(not(feature = "spotify"))]
+        let sink = {
+            if !local {
+                return Err(spotify_disabled());
+            }
+            self.lock_state()?.local_sink.clone()
         };
         if local && let Ok(mut timeline) = self.timeline.lock() {
             let position = timeline.position_ms;
@@ -812,13 +873,16 @@ impl SpotifyCore {
         if let Some(sink) = sink {
             sink.pause();
         }
-        if let Some(active) = active {
-            active.player.pause();
-        } else if !local {
-            return Err("there is no Spotify player to pause".to_owned());
-        }
-        if let Some(standby) = standby {
-            standby.player.pause();
+        #[cfg(feature = "spotify")]
+        {
+            if let Some(active) = active {
+                active.player.pause();
+            } else if !local {
+                return Err("there is no Spotify player to pause".to_owned());
+            }
+            if let Some(standby) = standby {
+                standby.player.pause();
+            }
         }
         self.spectrum.clear();
         Ok(())
@@ -844,16 +908,21 @@ impl SpotifyCore {
         if self.local_active()? {
             return self.local_seek(position_ms, ticket);
         }
-        let _switching = self.lock_switching();
-        if !self.current_seek(ticket) {
-            return Err(SUPERSEDED.to_owned());
+        #[cfg(feature = "spotify")]
+        {
+            let _switching = self.lock_switching();
+            if !self.current_seek(ticket) {
+                return Err(SUPERSEDED.to_owned());
+            }
+            self.player()?.seek(position_ms);
+            if let Ok(mut timeline) = self.timeline.lock() {
+                timeline.end_of_track = false;
+                timeline.observe_position(position_ms, None);
+            }
+            Ok(())
         }
-        self.player()?.seek(position_ms);
-        if let Ok(mut timeline) = self.timeline.lock() {
-            timeline.end_of_track = false;
-            timeline.observe_position(position_ms, None);
-        }
-        Ok(())
+        #[cfg(not(feature = "spotify"))]
+        Err(spotify_disabled())
     }
 
     pub(crate) fn playback_clock(&self) -> PlaybackClock {
@@ -924,6 +993,7 @@ impl SpotifyCore {
 
     /// spotify serves 96, 160 or 320 kbps. anything else is refused rather
     /// than silently rounded, so a bad value is visible at the call site.
+    #[cfg(feature = "spotify")]
     fn bitrate(kbps: u32) -> Result<Bitrate, String> {
         match kbps {
             96 => Ok(Bitrate::Bitrate96),
@@ -935,6 +1005,7 @@ impl SpotifyCore {
 
     /// applies to the next player, since librespot fixes the bitrate when the
     /// player is built. reconnecting playback picks it up.
+    #[cfg(feature = "spotify")]
     pub fn set_stream_quality(&self, kbps: u32) -> Result<(), String> {
         let bitrate = Self::bitrate(kbps)?;
         self.lock_state()?.stream_bitrate = bitrate;
@@ -945,7 +1016,10 @@ impl SpotifyCore {
     /// and limiter on streams, and replaygain tags on files of the person's own.
     pub fn set_volume_normalization(&self, enabled: bool) -> Result<(), String> {
         self.volume_normalization.store(enabled, Ordering::Relaxed);
-        self.lock_state()?.volume_normalization = enabled;
+        #[cfg(feature = "spotify")]
+        {
+            self.lock_state()?.volume_normalization = enabled;
+        }
         Ok(())
     }
 
@@ -955,6 +1029,7 @@ impl SpotifyCore {
 
     /// keeps streamed songs in `path`, up to `limit_bytes`; an empty path
     /// keeps none. like the bitrate, it applies the next time playback connects
+    #[cfg(feature = "spotify")]
     pub fn set_audio_cache(&self, path: String, limit_bytes: u64) -> Result<(), String> {
         self.lock_state()?.audio_cache = (!path.trim().is_empty()).then_some((path, limit_bytes));
         Ok(())
@@ -989,6 +1064,7 @@ impl SpotifyCore {
         // a song it was still loading over this
         self.begin_playback_request();
         self.clear_local_playback();
+        #[cfg(feature = "spotify")]
         if let Ok((active, standby)) = self.player_slots() {
             active.player.stop();
             if let Some(standby) = standby {
@@ -1073,6 +1149,7 @@ impl SpotifyCore {
         let sink = self.resolve_live_sink()?;
         let source = self.prepare_local(&sink, decoder, Duration::ZERO, replay_gain)?;
         self.local_playback_active.store(true, Ordering::Release);
+        #[cfg(feature = "spotify")]
         if let Ok((active, standby)) = self.player_slots() {
             active.player.stop();
             if let Some(standby) = standby {
@@ -1131,6 +1208,7 @@ impl SpotifyCore {
         let mut state = self.lock_state()?;
         // remember the desired gain even before either audio output exists.
         state.volume = volume;
+        #[cfg(feature = "spotify")]
         if let Some(mixer) = &state.mixer {
             mixer.set_volume((volume * VolumeCtrl::MAX_VOLUME as f32).round() as u16);
         }
@@ -1144,6 +1222,7 @@ impl SpotifyCore {
         self.lock_state().map(|state| state.volume).unwrap_or(0.75)
     }
 
+    #[cfg(feature = "spotify")]
     pub async fn lyrics_json(&self, spotify_uri: String) -> Result<String, String> {
         let uri = Self::parse_playable_uri(&spotify_uri)?;
         let track_id = SpotifyId::try_from(&uri)
@@ -1160,12 +1239,14 @@ impl SpotifyCore {
     /// a playlist's songs read through the session, as json shaped like the
     /// web api's items page. works for a playlist someone else made, which the
     /// web api no longer gives the songs of
+    #[cfg(feature = "spotify")]
     pub async fn playlist_json(&self, playlist_uri: String) -> Result<String, String> {
         playlist::playlist_json(&self.session()?, &playlist_uri).await
     }
 
     /// an artist's top songs read through the session, as json shaped like
     /// the web api's top tracks response, which spotify took away
+    #[cfg(feature = "spotify")]
     pub async fn artist_top_tracks_json(&self, artist_uri: String) -> Result<String, String> {
         artist::artist_top_tracks_json(&self.session()?, &artist_uri).await
     }
@@ -1201,6 +1282,7 @@ impl SpotifyCore {
 
     /// a player a request was waiting on that has since been replaced, by a
     /// rebuilt output or a new session, would play on unheard of: stop it
+    #[cfg(feature = "spotify")]
     fn release_if_orphaned(&self, player: &Arc<Player>) {
         let retained = self.lock_state().ok().is_some_and(|state| {
             state.player.as_ref().is_some_and(|slot| Arc::ptr_eq(&slot.player, player))
@@ -1217,10 +1299,12 @@ impl SpotifyCore {
             .map_err(|_| "spotify player state is unavailable".to_owned())
     }
 
+    #[cfg(feature = "spotify")]
     fn player(&self) -> Result<Arc<Player>, String> {
         Ok(Arc::clone(&self.player_slots()?.0.player))
     }
 
+    #[cfg(feature = "spotify")]
     fn player_slots(&self) -> Result<(PlayerSlot, Option<PlayerSlot>), String> {
         let state = self.lock_state()?;
 
@@ -1234,6 +1318,7 @@ impl SpotifyCore {
 
     /// returns the active and standby slots, rebuilding either whose
     /// normalisation setting no longer matches `volume_normalization`.
+    #[cfg(feature = "spotify")]
     fn ensure_player_slots(&self) -> Result<(PlayerSlot, Option<PlayerSlot>), String> {
         let (session, mixer, bitrate, normalisation, needs_active, needs_standby) = {
             let state = self.lock_state()?;
@@ -1293,6 +1378,7 @@ impl SpotifyCore {
         Ok((active, standby))
     }
 
+    #[cfg(feature = "spotify")]
     fn ensure_crossfade_slots(&self) -> Result<(PlayerSlot, PlayerSlot), String> {
         let (session, mixer, bitrate, normalisation, outgoing) = {
             let state = self.lock_state()?;
@@ -1331,6 +1417,7 @@ impl SpotifyCore {
         Ok((outgoing, new_standby))
     }
 
+    #[cfg(feature = "spotify")]
     fn session(&self) -> Result<Session, String> {
         self.lock_state()?
             .session
@@ -1431,6 +1518,7 @@ impl SpotifyCore {
         }
     }
 
+    #[cfg(feature = "spotify")]
     fn parse_playable_uri(spotify_uri: &str) -> Result<SpotifyUri, String> {
         let uri = SpotifyUri::from_uri(spotify_uri)
             .map_err(|error| format!("invalid spotify uri: {error}"))?;
@@ -1445,6 +1533,59 @@ impl SpotifyCore {
     }
 }
 
+#[cfg(not(feature = "spotify"))]
+fn spotify_disabled() -> String {
+    "Spotify support is disabled in this build".to_owned()
+}
+
+#[cfg(all(feature = "capi", not(feature = "spotify")))]
+impl SpotifyCore {
+    pub fn session_is_valid(&self) -> bool {
+        false
+    }
+
+    pub async fn connect_returning_login(&self, _: String, _: String) -> Result<String, String> {
+        Err(spotify_disabled())
+    }
+
+    pub async fn connect_stored(&self, _: String, _: String) -> Result<String, String> {
+        Err(spotify_disabled())
+    }
+
+    pub async fn play_track_as(&self, _: String, _: u64) -> Result<(), String> {
+        Err(spotify_disabled())
+    }
+
+    pub async fn crossfade_track_as(&self, _: String, _: u32, _: u64) -> Result<(), String> {
+        Err(spotify_disabled())
+    }
+
+    pub fn preload_track(&self, _: String, _: bool) -> Result<(), String> {
+        Err(spotify_disabled())
+    }
+
+    pub fn set_stream_quality(&self, _: u32) -> Result<(), String> {
+        Err(spotify_disabled())
+    }
+
+    pub fn set_audio_cache(&self, _: String, _: u64) -> Result<(), String> {
+        Err(spotify_disabled())
+    }
+
+    pub async fn lyrics_json(&self, _: String) -> Result<String, String> {
+        Err(spotify_disabled())
+    }
+
+    pub async fn playlist_json(&self, _: String) -> Result<String, String> {
+        Err(spotify_disabled())
+    }
+
+    pub async fn artist_top_tracks_json(&self, _: String) -> Result<String, String> {
+        Err(spotify_disabled())
+    }
+}
+
+#[cfg(feature = "spotify")]
 async fn monitor_player_events(
     mut events: PlayerEventChannel,
     timeline: Arc<Mutex<PlaybackTimeline>>,
@@ -1498,6 +1639,7 @@ async fn monitor_player_events(
     }
 }
 
+#[cfg(feature = "spotify")]
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct LyricsPayload {
@@ -1508,6 +1650,7 @@ struct LyricsPayload {
     colors: LyricsColorsPayload,
 }
 
+#[cfg(feature = "spotify")]
 impl From<Lyrics> for LyricsPayload {
     fn from(lyrics: Lyrics) -> Self {
         Self {
@@ -1536,6 +1679,7 @@ impl From<Lyrics> for LyricsPayload {
     }
 }
 
+#[cfg(feature = "spotify")]
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct LyricsLinePayload {
@@ -1544,6 +1688,7 @@ struct LyricsLinePayload {
     words: String,
 }
 
+#[cfg(feature = "spotify")]
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct LyricsColorsPayload {
@@ -1627,6 +1772,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "spotify")]
     fn player_commands_require_a_connection() {
         let core = SpotifyCore::new();
 
@@ -1640,6 +1786,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "spotify")]
     fn rejects_invalid_spotify_uris() {
         let core = SpotifyCore::new();
 
@@ -1647,6 +1794,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg(feature = "spotify")]
     async fn awaited_playback_requires_a_connection() {
         let core = SpotifyCore::new();
 
@@ -1659,6 +1807,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg(feature = "spotify")]
     async fn a_playlist_is_read_through_the_session() {
         let core = SpotifyCore::new();
 
@@ -1671,6 +1820,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg(feature = "spotify")]
     async fn an_artists_top_songs_are_read_through_the_session() {
         let core = SpotifyCore::new();
 
