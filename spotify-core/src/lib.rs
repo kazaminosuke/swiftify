@@ -514,11 +514,12 @@ impl SpotifyCore {
         if self.output_health.is_stalled() {
             return true;
         }
-        // file playback has its own clock, driven by what the device
-        // actually consumed, so a stalled local sink shows up as a position
-        // that stops moving rather than as a quiet timeline.
+        // File playback uses a separate sink and does not emit librespot
+        // clock events.
         if self.local_playback_active.load(Ordering::Acquire) {
-            return false;
+            return self.lock_state().is_ok_and(|state| {
+                state.local_sink.as_ref().is_some_and(|sink| sink.is_lost())
+            });
         }
         self.timeline
             .lock()
@@ -1440,15 +1441,15 @@ impl SpotifyCore {
         std::thread::Builder::new()
             .name("swiftify-local-end".to_owned())
             .spawn(move || {
-                while !cancel.load(Ordering::Relaxed) && !sink.empty() {
+                while !cancel.load(Ordering::Relaxed) && !sink.is_lost() && !sink.empty() {
                     std::thread::sleep(Duration::from_millis(200));
                 }
-                if cancel.load(Ordering::Relaxed) {
+                if cancel.load(Ordering::Relaxed) || sink.is_lost() {
                     return;
                 }
                 // a short grace period ensures any trailing source has been flushed.
                 std::thread::sleep(Duration::from_millis(100));
-                if cancel.load(Ordering::Relaxed) {
+                if cancel.load(Ordering::Relaxed) || sink.is_lost() {
                     return;
                 }
                 if let Ok(mut timeline) = timeline.lock() {

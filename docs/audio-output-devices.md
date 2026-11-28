@@ -22,3 +22,12 @@ WASAPI/ALSA/PipeWire device selection and disconnect timing are unverified.
 
 - 2026-11-20 19:18. Official App Server returned HTTP 401 during audio output
   testing. No remaining-usage percentage was available.
+
+The Qt local file route also forwards CPAL stream and command failures to
+the existing Qt recovery state. A lost sink does not report natural end of
+track. The app waits for an explicit resume before rebuilding the output.
+The standalone device selector is still separate from the Qt controls.
+
+The local renderer gates PCM consumption on the paused and lost states.
+Callbacks arriving while a pause command is still pending cannot consume
+a fresh seek target. The regression test drives that callback edge directly.

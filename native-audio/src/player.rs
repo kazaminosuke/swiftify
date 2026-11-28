@@ -22,7 +22,7 @@ use rodio::{
 use crate::{
     decode::open_media,
     device::{OutputDevice, open_device_stream, open_stereo_stream},
-    media::{FileMedia, MediaProvider, ReadFailure},
+    media::{FileMedia, MediaCancellation, MediaProvider, ReadFailure},
 };
 
 const CHANNELS: usize = 2;
@@ -66,6 +66,7 @@ pub struct Snapshot {
 pub enum AudioError {
     Input(io::ErrorKind),
     InputRead(io::ErrorKind),
+    InputSeek(io::ErrorKind),
     Decode(rodio::decoder::DecoderError),
     Seek(rodio::source::SeekError),
     DecoderThread(io::Error),
@@ -82,7 +83,8 @@ impl fmt::Display for AudioError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Input(kind) => write!(f, "could not open audio input: {kind}"),
-            Self::InputRead(kind) => write!(f, "audio input failed: {kind}"),
+            Self::InputRead(kind) => write!(f, "could not read audio input: {kind}"),
+            Self::InputSeek(kind) => write!(f, "could not reposition audio input: {kind}"),
             Self::Decode(error) => write!(f, "could not decode audio file: {error}"),
             Self::Seek(error) => write!(f, "could not seek in audio file: {error}"),
             Self::DecoderThread(error) => write!(f, "could not start audio decoder: {error}"),
@@ -376,6 +378,7 @@ struct RenderSlot {
 
 struct Track {
     provider: Arc<dyn MediaProvider>,
+    cancellation: MediaCancellation,
     duration: Option<Duration>,
     offset: Duration,
     buffer: Arc<Buffer>,
@@ -388,22 +391,28 @@ impl Track {
         rate: u32,
         offset: Duration,
     ) -> Result<Self, AudioError> {
+        let cancellation = MediaCancellation::default();
         let input = provider
-            .open()
-            .map_err(|error| AudioError::Input(error.kind()))?;
+            .open_cancellable(cancellation.clone())
+            .map_err(|error| AudioError::Input(error.kind()))?
+            .with_cancellation(cancellation.clone());
         let failure = input.failure.clone();
+        let seek_failure = input.seek_failure.clone();
         let mut decoder = open_media(input).map_err(|error| {
-            failure
-                .kind()
-                .map_or(AudioError::Decode(error), AudioError::InputRead)
+            input_failure(&failure, &seek_failure).unwrap_or(AudioError::Decode(error))
         })?;
-        let duration = decoder.total_duration();
-        if !offset.is_zero() {
-            decoder.try_seek(offset).map_err(AudioError::Seek)?;
-        }
-
         if let Some(kind) = failure.kind() {
             return Err(AudioError::InputRead(kind));
+        }
+        let duration = decoder.total_duration();
+        if !offset.is_zero() {
+            seek_failure.clear();
+            decoder.try_seek(offset).map_err(|error| {
+                input_failure(&failure, &seek_failure).unwrap_or(AudioError::Seek(error))
+            })?;
+            if let Some(kind) = failure.kind() {
+                return Err(AudioError::InputRead(kind));
+            }
         }
         let source = UniformSourceIterator::new(decoder, CHANNELS as u16, rate);
         let capacity = (rate as usize * CHANNELS / 4).max(DECODE_SAMPLES * 2);
@@ -416,6 +425,7 @@ impl Track {
 
         Ok(Self {
             provider,
+            cancellation,
             duration,
             offset,
             buffer,
@@ -426,12 +436,19 @@ impl Track {
 
 impl Drop for Track {
     fn drop(&mut self) {
+        self.cancellation.cancel();
         lock(&self.buffer.queue).cancelled = true;
         self.buffer.space.notify_one();
         if let Some(decoder) = self.decoder.take() {
             let _ = decoder.join();
         }
     }
+}
+
+fn input_failure(read: &ReadFailure, seek: &ReadFailure) -> Option<AudioError> {
+    read.kind()
+        .map(AudioError::InputRead)
+        .or_else(|| seek.kind().map(AudioError::InputSeek))
 }
 
 struct Buffer {
@@ -652,6 +669,109 @@ fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn dropping_a_track_cancels_a_blocked_provider_read() {
+        use crate::media::MediaInput;
+        use std::{
+            io::{Cursor, Read, Seek, SeekFrom},
+            sync::mpsc::{self, SyncSender},
+        };
+
+        struct Provider {
+            audio: Vec<u8>,
+            started: SyncSender<()>,
+            observed: Arc<AtomicBool>,
+        }
+
+        struct Reader {
+            inner: Cursor<Vec<u8>>,
+            owner: thread::ThreadId,
+            started: SyncSender<()>,
+            cancellation: MediaCancellation,
+            observed: Arc<AtomicBool>,
+        }
+
+        impl Read for Reader {
+            fn read(&mut self, output: &mut [u8]) -> io::Result<usize> {
+                if thread::current().id() == self.owner {
+                    return self.inner.read(output);
+                }
+                self.started.try_send(()).ok();
+                let deadline = Instant::now() + Duration::from_secs(3);
+                while !self.cancellation.is_cancelled() && Instant::now() < deadline {
+                    thread::sleep(Duration::from_millis(1));
+                }
+                self.observed
+                    .store(self.cancellation.is_cancelled(), Ordering::Release);
+                Err(io::ErrorKind::ConnectionAborted.into())
+            }
+        }
+
+        impl Seek for Reader {
+            fn seek(&mut self, position: SeekFrom) -> io::Result<u64> {
+                self.inner.seek(position)
+            }
+        }
+
+        impl MediaProvider for Provider {
+            fn open(&self) -> io::Result<MediaInput> {
+                unreachable!("the decoder must pass the cancellation token")
+            }
+
+            fn open_cancellable(&self, cancellation: MediaCancellation) -> io::Result<MediaInput> {
+                let reader = Reader {
+                    inner: Cursor::new(self.audio.clone()),
+                    owner: thread::current().id(),
+                    started: self.started.clone(),
+                    cancellation,
+                    observed: Arc::clone(&self.observed),
+                };
+                Ok(MediaInput::new(reader, Some(self.audio.len() as u64), None))
+            }
+        }
+
+        let spec = hound::WavSpec {
+            channels: 1,
+            sample_rate: 48_000,
+            bits_per_sample: 16,
+            sample_format: hound::SampleFormat::Int,
+        };
+        let mut audio = Cursor::new(Vec::new());
+        let mut wav = hound::WavWriter::new(&mut audio, spec).unwrap();
+        for _ in 0..48_000 {
+            wav.write_sample(0i16).unwrap();
+        }
+        wav.finalize().unwrap();
+        let observed = Arc::new(AtomicBool::new(false));
+        let (started, waiting) = mpsc::sync_channel(1);
+        let provider = Arc::new(Provider {
+            audio: audio.into_inner(),
+            started,
+            observed: Arc::clone(&observed),
+        });
+        let track = Track::open(provider, 48_000, Duration::ZERO).unwrap();
+        waiting.recv_timeout(Duration::from_secs(2)).unwrap();
+        drop(track);
+        assert!(observed.load(Ordering::Acquire));
+    }
+
+    #[test]
+    fn distinguishes_input_seek_from_input_read_failure() {
+        let read = ReadFailure::default();
+        let seek = ReadFailure::default();
+        assert!(input_failure(&read, &seek).is_none());
+        seek.record(io::ErrorKind::PermissionDenied);
+        assert!(matches!(
+            input_failure(&read, &seek),
+            Some(AudioError::InputSeek(io::ErrorKind::PermissionDenied))
+        ));
+        read.record(io::ErrorKind::TimedOut);
+        assert!(matches!(
+            input_failure(&read, &seek),
+            Some(AudioError::InputRead(io::ErrorKind::TimedOut))
+        ));
+    }
 
     #[test]
     fn muted_frames_advance_the_clock_and_output_silence() {
