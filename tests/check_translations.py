@@ -43,6 +43,7 @@ def unique_object(pairs):
 languages = [
     ("Russian", "translations/ru.json", 3, "kRussianTranslationEnabled"),
     ("German", "translations/de.json", 2, "kGermanTranslationEnabled"),
+    ("Japanese", "translations/ja.json", 1, None),
 ]
 
 sources = []

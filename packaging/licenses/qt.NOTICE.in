@@ -6,5 +6,3 @@ General Public License version 3 it adds to is in LICENSE.
 Swiftify links Qt's libraries dynamically, so they can be swapped for a
 modified build of Qt @Qt6_VERSION@. Qt's source is at
 https://download.qt.io/archive/qt/@Qt6_VERSION_MAJOR@.@Qt6_VERSION_MINOR@/@Qt6_VERSION@/single/
-
-@SWIFTIFY_QT_NETWORKAUTH_NOTICE@

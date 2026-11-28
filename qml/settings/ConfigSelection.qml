@@ -28,17 +28,22 @@ Item {
     property string text
     property alias segments: choices.segments
     property alias currentIndex: choices.currentIndex
+    property alias segmentPadding: choices.horizontalPadding
+    property bool stackWhenNarrow: false
+    readonly property bool stacked: stackWhenNarrow && width < label.implicitWidth + choices.implicitWidth + 30
     signal activated(int index)
 
     width: parent ? parent.width : 0
-    implicitHeight: Math.max(52, choices.implicitHeight + 12)
+    implicitHeight: Math.max(52, choices.implicitHeight + 12 + (stacked ? label.implicitHeight + 6 : 0))
     opacity: enabled ? 1 : 0.38
 
     StyledText {
+        id: label
+        objectName: "selectionLabel"
         x: 12
-        anchors.right: choices.left
+        anchors.right: root.stacked ? parent.right : choices.left
         anchors.rightMargin: 12
-        anchors.verticalCenter: parent.verticalCenter
+        y: root.stacked ? 6 : (root.height - height) / 2
         text: root.text
         elide: Text.ElideRight
     }
@@ -47,7 +52,7 @@ Item {
         id: choices
         anchors.right: parent.right
         anchors.rightMargin: 6
-        anchors.verticalCenter: parent.verticalCenter
+        y: root.stacked ? label.y + label.height + 6 : (root.height - height) / 2
         segmentHeight: 32
         enabled: root.enabled
         onActivated: (index) => root.activated(index)

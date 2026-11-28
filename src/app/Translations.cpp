@@ -119,6 +119,7 @@ Translations::Translations(Settings *settings, QObject *parent)
 {
     loadCatalog(QStringLiteral(":/translations/ru.json"), m_russian);
     loadCatalog(QStringLiteral(":/translations/de.json"), m_german);
+    loadCatalog(QStringLiteral(":/translations/ja.json"), m_japanese);
     connect(settings, &Settings::languageChanged, this, &Translations::apply);
     connect(settings, &Settings::languageAvailabilityChanged, this, &Translations::apply);
     apply();
@@ -151,9 +152,12 @@ void Translations::apply()
     } else if (isLanguageEnabled(QStringLiteral("de"))
                && (language == QLatin1StringView("de") || (followSystem && systemLanguage == QLocale::German))) {
         m_active = &m_german;
+    } else if (language == QLatin1StringView("ja") || (followSystem && systemLanguage == QLocale::Japanese)) {
+        m_active = &m_japanese;
     }
     QLocale::setDefault(m_active == &m_russian ? QLocale(QLocale::Russian, QLocale::Russia)
                         : m_active == &m_german ? QLocale(QLocale::German, QLocale::Germany)
+                        : m_active == &m_japanese ? QLocale(QLocale::Japanese, QLocale::Japan)
                         : language == QLatin1StringView("en") ? QLocale(QLocale::English, QLocale::UnitedStates)
                                                               : QLocale::system());
     if (m_active) QCoreApplication::installTranslator(this);
@@ -193,8 +197,9 @@ QString Translations::translate(const char *context, const char *sourceText, con
     if (!m_active || !sourceText) return {};
     const auto value = m_active->entries.value(QString::fromUtf8(sourceText));
     if (value.isArray() && n >= 0) {
-        // German has two forms (one, other); Russian has three (one, few, many).
-        const int form = m_active == &m_german ? (n == 1 ? 0 : 1)
+        // Japanese has one form, German has two, and Russian has three.
+        const int form = m_active == &m_japanese ? 0
+            : m_active == &m_german ? (n == 1 ? 0 : 1)
             : n % 10 == 1 && n % 100 != 11 ? 0
             : n % 10 >= 2 && n % 10 <= 4 && (n % 100 < 12 || n % 100 > 14) ? 1 : 2;
         return value.toArray().at(form).toString();

@@ -109,7 +109,8 @@ if [[ -z "$QT" ]]; then
     QT_NODOT="${HOST_QT_VERSION//./}"
     QT="$WORK/qt"
     if [[ ! -f "$QT/lib/cmake/Qt6Core/Qt6CoreConfig.cmake" \
-        || ! -f "$QT/lib/cmake/Qt6NetworkAuth/Qt6NetworkAuthConfig.cmake" ]]; then
+        || ! -f "$QT/lib/cmake/Qt6ShaderTools/Qt6ShaderToolsConfig.cmake" \
+        || ! -f "$QT/lib/cmake/Qt6WebSockets/Qt6WebSocketsConfig.cmake" ]]; then
         echo "downloading Windows Qt $HOST_QT_VERSION (mingw_64) into $QT..."
         mkdir -p "$WORK/qt/archives" "$QT"
         BASE_URL=""
@@ -133,7 +134,6 @@ if [[ -z "$QT" ]]; then
                 "qt.qt6.${QT_NODOT}.win64_mingw":MinGW-w64-* | \
                 "qt.qt6.${QT_NODOT}.addons.qtshadertools.win64_mingw":qtshadertools-* | \
                 "qt.qt6.${QT_NODOT}.addons.qtwebsockets.win64_mingw":qtwebsockets-* | \
-                "qt.qt6.${QT_NODOT}.addons.qtnetworkauth.win64_mingw":qtnetworkauth-* | \
                 "qt.qt6.${QT_NODOT}.addons.qttasktree.win64_mingw":qttasktree-* | \
                 "qt.qt6.${QT_NODOT}.addons.qtimageformats.win64_mingw":qtimageformats-*)
                     [[ "$ver" =~ ^[0-9.-]+$ && "$archive" =~ ^[A-Za-z0-9._-]+\.7z$ ]] \
@@ -285,7 +285,7 @@ done
 
 [[ -f "$STAGE/share/licenses/swiftify/LICENSE" ]] || fail "the license is missing"
 for license in material-color-utilities.LICENSE rounded-polygon-qmljs.LICENSE material-symbols.LICENSE \
-    rust-crates.LICENSE build-provenance.txt qt.LICENSE qt.NOTICE qtkeychain.LICENSE qcoro.LICENSE YouTubeBrand.NOTICE; do
+    rust-crates.LICENSE build-provenance.txt qt.LICENSE qt.NOTICE qtkeychain.LICENSE qcoro.LICENSE; do
     [[ -f "$STAGE/share/licenses/swiftify/$license" ]] || fail "$license is missing"
 done
 

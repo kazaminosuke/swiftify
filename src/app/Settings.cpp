@@ -41,6 +41,12 @@ QString oneOf(const QString &value, std::initializer_list<QString> allowed, cons
     return std::find(allowed.begin(), allowed.end(), value) != allowed.end() ? value : fallback;
 }
 
+QString interfaceLanguage(const QString &value)
+{
+    return oneOf(value, {QStringLiteral("system"), QStringLiteral("en"), QStringLiteral("ru"),
+                         QStringLiteral("de"), QStringLiteral("ja")}, QStringLiteral("system"));
+}
+
 int quality(int kbps, int fallback)
 {
     return kbps == 96 || kbps == 160 || kbps == 320 ? kbps : fallback;
@@ -203,10 +209,7 @@ void Settings::load()
     if (QRegularExpression(QStringLiteral("^[0-9]{17,20}$")).match(id).hasMatch()) {
         m_discordApplicationId = id;
     }
-    const QString configuredLanguage = oneOf(
-        stored<QString>(m_store, "language", m_language),
-        {QStringLiteral("system"), QStringLiteral("en"), QStringLiteral("ru"), QStringLiteral("de")},
-        QStringLiteral("system"));
+    const QString configuredLanguage = interfaceLanguage(stored<QString>(m_store, "language", m_language));
     if (!Translations::isLanguageEnabled(configuredLanguage)) {
         m_language = QStringLiteral("en");
         m_store.setValue(QStringLiteral("language"), m_language);
@@ -615,7 +618,7 @@ void Settings::setDiscordApplicationId(const QString &raw)
 }
 void Settings::setLanguage(const QString &raw)
 {
-    QString value = oneOf(raw, {QStringLiteral("system"), QStringLiteral("en"), QStringLiteral("ru"), QStringLiteral("de")}, QStringLiteral("system"));
+    QString value = interfaceLanguage(raw);
     if (!Translations::isLanguageEnabled(value)) {
         value = QStringLiteral("en");
     }

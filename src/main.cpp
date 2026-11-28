@@ -40,9 +40,6 @@
 #include "theme/PlayerStyle.h"
 #include "theme/Theme.h"
 
-#ifdef SWIFTIFY_HAS_YOUTUBE_CLIENT
-#include "youtube/YouTubeController.h"
-#endif
 #ifdef SWIFTIFY_HAS_SOLOIST
 #include "soloist/SoloistCore.h"
 #endif
@@ -271,13 +268,8 @@ int main(int argc, char *argv[])
 #endif
     const QStringList arguments = QCoreApplication::arguments();
     const QString command = SingleInstance::commandFrom(arguments);
-#ifdef SWIFTIFY_HAS_YOUTUBE_CLIENT
-    const bool catalogueMode = arguments.contains(QStringLiteral("--youtube"));
-#else
-    const bool catalogueMode = false;
-#endif
 #ifdef Q_OS_WIN
-    application.setQuitOnLastWindowClosed(catalogueMode);
+    application.setQuitOnLastWindowClosed(false);
 #endif
 #ifdef Q_OS_UNIX
     quitGracefullyOnSignals(application);
@@ -297,13 +289,12 @@ int main(int argc, char *argv[])
         || qEnvironmentVariableIntValue("SWIFTIFY_ENABLE_SPOTIFY") == 1;
     const bool spotifyDisabled = arguments.contains(QStringLiteral("--disable-spotify"));
 #ifdef SWIFTIFY_HAS_SPOTIFY
-    const bool spotifyEnabled = !catalogueMode && spotifyRequested && !spotifyDisabled;
+    const bool spotifyEnabled = spotifyRequested && !spotifyDisabled;
 #else
     const bool spotifyEnabled = false;
 #endif
-    SingleInstance instance(catalogueMode ? SingleInstance::Mode::Catalogue : SingleInstance::Mode::Playback,
-                            spotifyEnabled);
-    const auto startup = instance.start(arguments, !catalogueMode && (spotifyRequested || spotifyDisabled));
+    SingleInstance instance(spotifyEnabled);
+    const auto startup = instance.start(arguments, spotifyRequested || spotifyDisabled);
     if (startup == SingleInstance::Start::Forwarded) return EXIT_SUCCESS;
     if (startup == SingleInstance::Start::Failed) {
         qWarning("Could not contact the running Swiftify instance or start this mode.");
@@ -322,33 +313,6 @@ int main(int argc, char *argv[])
     Settings settings(nullptr);
     Translations translations(&settings);
     Theme theme(&settings);
-    const auto configureEngine = [&](QQmlApplicationEngine &engine) {
-        QObject::connect(&translations, &Translations::languageChanged, &engine, &QQmlEngine::retranslate);
-        QObject::connect(&engine, &QQmlApplicationEngine::objectCreationFailed, &application,
-                         [] { QCoreApplication::exit(EXIT_FAILURE); }, Qt::QueuedConnection);
-    };
-
-#ifdef SWIFTIFY_HAS_YOUTUBE_CLIENT
-    if (catalogueMode) {
-        youtube::YouTubeController music;
-        QNetworkAccessManager images;
-        ArtworkCache artwork(&images, nullptr, ArtworkCache::Remote::YouTube);
-        QObject::connect(&music, &youtube::YouTubeController::catalogueStopped, &artwork, &ArtworkCache::cancelRemote);
-        QQmlApplicationEngine engine;
-        engine.addImageProvider(QStringLiteral("art"), new ArtworkImageProvider);
-        configureEngine(engine);
-        QObject::connect(&instance, &SingleInstance::commandReceived, &engine, [&engine] {
-            if (auto *window = qobject_cast<QWindow *>(engine.rootObjects().value(0))) {
-                window->showNormal();
-                window->raise();
-                window->requestActivate();
-            }
-        });
-        engine.setInitialProperties({{QStringLiteral("music"), QVariant::fromValue(&music)}});
-        engine.loadFromModule("Swiftify", "YouTubeWindow");
-        return application.exec();
-    }
-#endif
 
     ErrorCenter errors(nullptr);
     QNetworkAccessManager network;
@@ -426,7 +390,9 @@ int main(int argc, char *argv[])
 #endif
 
     QQmlApplicationEngine engine;
-    configureEngine(engine);
+    QObject::connect(&translations, &Translations::languageChanged, &engine, &QQmlEngine::retranslate);
+    QObject::connect(&engine, &QQmlApplicationEngine::objectCreationFailed, &application,
+                     [] { QCoreApplication::exit(EXIT_FAILURE); }, Qt::QueuedConnection);
 #ifdef Q_OS_WIN
     WindowsIntegration windowsIntegration(&player, &theme);
     engine.setInitialProperties({{QStringLiteral("visible"), false}});
