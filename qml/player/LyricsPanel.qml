@@ -51,9 +51,58 @@ Item {
         description: Player.lyricsMessage.length > 0 ? qsTranslate("Errors", Player.lyricsMessage) : qsTr("i guess bro")
     }
 
+    Row {
+        id: timingControls
+        anchors.left: parent.left
+        anchors.leftMargin: 24
+        anchors.top: parent.top
+        visible: Player.hasLyrics && Player.lyricsSynchronized && !Player.loadingLyrics
+        spacing: 4
+
+        IconButton {
+            scheme: root.scheme
+            size: 32
+            iconSize: 18
+            symbol: "remove"
+            text: qsTr("Show lyrics earlier")
+            Accessible.name: text
+            enabled: Player.lyricsDelayMs > -10000
+            autoRepeat: true
+            onClicked: Player.lyricsDelayMs -= 100
+        }
+        StyledText {
+            anchors.verticalCenter: parent.verticalCenter
+            text: qsTr("Lyrics delay %1 ms").arg(Player.lyricsDelayMs)
+            font.pixelSize: Appearance.fontSize.smaller
+            color: root.scheme.onSurfaceVariant
+        }
+        IconButton {
+            scheme: root.scheme
+            size: 32
+            iconSize: 18
+            symbol: "add"
+            text: qsTr("Show lyrics later")
+            Accessible.name: text
+            enabled: Player.lyricsDelayMs < 10000
+            autoRepeat: true
+            onClicked: Player.lyricsDelayMs += 100
+        }
+        IconButton {
+            scheme: root.scheme
+            size: 32
+            iconSize: 18
+            symbol: "restart_alt"
+            text: qsTr("Reset lyrics delay")
+            Accessible.name: text
+            enabled: Player.lyricsDelayMs !== 0
+            onClicked: Player.lyricsDelayMs = 0
+        }
+    }
+
     ListView {
         id: list
         anchors.fill: parent
+        anchors.topMargin: timingControls.visible ? timingControls.height : 0
         Reveal.shown: !Player.loadingLyrics && Player.hasLyrics
         model: Player.lyrics
         spacing: 22

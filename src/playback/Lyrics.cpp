@@ -27,6 +27,7 @@
 #include <QRegularExpression>
 
 #include <algorithm>
+#include <limits>
 
 namespace swiftify {
 
@@ -37,12 +38,27 @@ std::optional<Lyrics> Lyrics::fromLrc(const QString &text)
     // [ar:...], [ti:...] and the like say who and what, and are not sung
     static const QRegularExpression tag(QStringLiteral(R"(^\[[a-zA-Z#]+:.*\]\s*$)"));
 
+    static const QRegularExpression offsetTag(QStringLiteral(R"(^\[offset:\s*([+-]?\d+)\s*\]$)"),
+                                              QRegularExpression::CaseInsensitiveOption);
+
     Lyrics lyrics;
     lyrics.provider = QStringLiteral("LRC file");
+    qint64 fileOffsetMs = 0;
     QList<LyricLine> timed;
     QList<LyricLine> plain;
     for (QString line : text.split(u'\n')) {
+        if (line.startsWith(QChar::ByteOrderMark)) {
+            line.remove(0, 1);
+        }
         line = line.trimmed();
+        if (const auto offset = offsetTag.match(line); offset.hasMatch()) {
+            bool valid = false;
+            const int value = offset.captured(1).toInt(&valid);
+            if (valid) {
+                fileOffsetMs = value;
+            }
+            continue;
+        }
         QList<quint32> starts;
         for (auto match = stamp.match(line); match.hasMatch(); match = stamp.match(line)) {
             const QString fraction = match.captured(3);
@@ -62,6 +78,12 @@ std::optional<Lyrics> Lyrics::fromLrc(const QString &text)
     if (!timed.isEmpty()) {
         std::stable_sort(timed.begin(), timed.end(),
                          [](const LyricLine &a, const LyricLine &b) { return a.startTimeMs < b.startTimeMs; });
+        // LRC's positive offset advances its cues. The manual playback
+        // offset remains separate and can be changed without reparsing.
+        constexpr qint64 maxStart = std::numeric_limits<quint32>::max() - 5000;
+        for (LyricLine &line : timed) {
+            line.startTimeMs = quint32(std::clamp(qint64(line.startTimeMs) - fileOffsetMs, qint64(0), maxStart));
+        }
         for (qsizetype index = 0; index + 1 < timed.size(); ++index) {
             timed[index].endTimeMs = timed[index + 1].startTimeMs;
         }
@@ -122,7 +144,7 @@ std::optional<Lyrics> Lyrics::fromJson(const QByteArray &json)
     return lyrics;
 }
 
-int Lyrics::lineIndex(quint32 positionMs) const
+int Lyrics::lineIndex(qint64 positionMs) const
 {
     if (!synchronized || lines.isEmpty()) {
         return -1;
