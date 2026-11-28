@@ -253,6 +253,12 @@ QCoro::Task<QString> RustCore::artistTopTracksJson(QString artistUri)
 void RustCore::play() { throwIfError(swiftify_core_play(m_core)); }
 void RustCore::pause() { throwIfError(swiftify_core_pause(m_core)); }
 void RustCore::seek(quint32 positionMs) { throwIfError(swiftify_core_seek(m_core, positionMs)); }
+
+QCoro::Task<> RustCore::seekAsync(quint32 positionMs)
+{
+    co_await request([&](quint64 id) { swiftify_core_seek_async(m_core, id, positionMs); });
+}
+
 void RustCore::setVolume(float volume) { throwIfError(swiftify_core_set_volume(m_core, volume)); }
 float RustCore::volume() const { return swiftify_core_volume(m_core); }
 void RustCore::setStreamQuality(int kbps)
@@ -293,6 +299,14 @@ bool RustCore::sessionIsValid() const { return swiftify_core_session_is_valid(m_
 bool RustCore::audioOutputStalled() const { return swiftify_core_audio_output_stalled(m_core); }
 quint32 RustCore::playbackPositionMs() const { return swiftify_core_playback_position_ms(m_core); }
 quint32 RustCore::playbackDurationMs() const { return swiftify_core_playback_duration_ms(m_core); }
+
+PlaybackClock RustCore::playbackClock() const
+{
+    SwiftifyPlaybackClock clock{};
+    swiftify_core_playback_clock(m_core, &clock);
+    return {clock.position_ms, clock.duration_ms, clock.revision, bool(clock.flags & SWIFTIFY_CLOCK_LOCAL)};
+}
+
 bool RustCore::takeEndOfTrack() { return swiftify_core_take_end_of_track(m_core); }
 
 bool RustCore::playLiveBuffer(SwiftifyLiveBuffer *buffer)

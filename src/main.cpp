@@ -40,6 +40,9 @@
 #include "theme/PlayerStyle.h"
 #include "theme/Theme.h"
 
+#ifdef SWIFTIFY_HAS_YOUTUBE_CLIENT
+#include "youtube/YouTubeController.h"
+#endif
 #ifdef SWIFTIFY_HAS_SOLOIST
 #include "soloist/SoloistCore.h"
 #endif
@@ -266,8 +269,16 @@ int main(int argc, char *argv[])
 #else
     QGuiApplication application(argc, argv);
 #endif
+    const QStringList arguments = QCoreApplication::arguments();
+    const QString command = SingleInstance::commandFrom(arguments);
+#ifdef SWIFTIFY_HAS_YOUTUBE_CLIENT
+    const bool catalogueMode = !arguments.contains(QStringLiteral("--spotify"))
+        && (arguments.contains(QStringLiteral("--youtube")) || command == QLatin1StringView("raise"));
+#else
+    const bool catalogueMode = false;
+#endif
 #ifdef Q_OS_WIN
-    application.setQuitOnLastWindowClosed(false);
+    application.setQuitOnLastWindowClosed(catalogueMode);
 #endif
 #ifdef Q_OS_UNIX
     quitGracefullyOnSignals(application);
@@ -277,8 +288,13 @@ int main(int argc, char *argv[])
     QGuiApplication::setWindowIcon(QIcon(QStringLiteral(":/qt/qml/Swiftify/resources/swiftify-icon.png")));
 #endif
 
-    SingleInstance instance;
-    if (instance.forwardToRunningInstance(QCoreApplication::arguments())) {
+    // the plain style: every control swiftify shows is drawn by its own components.
+    QQuickStyle::setStyle(QStringLiteral("Basic"));
+    fonts::loadIconFont();
+    fonts::loadInterfaceFont();
+
+    SingleInstance instance(catalogueMode ? SingleInstance::Mode::Catalogue : SingleInstance::Mode::Playback);
+    if (instance.forwardToRunningInstance(arguments)) {
         return EXIT_SUCCESS;
     }
 #ifdef Q_OS_MACOS
@@ -291,15 +307,35 @@ int main(int argc, char *argv[])
     application.installEventFilter(&scrollMomentum);
 #endif
 
-    // the plain style: every control swiftify shows is drawn by its own components.
-    QQuickStyle::setStyle(QStringLiteral("Basic"));
-    fonts::loadIconFont();
-    fonts::loadInterfaceFont();
-
-    ErrorCenter errors(nullptr);
     Settings settings(nullptr);
     Translations translations(&settings);
     Theme theme(&settings);
+    const auto configureEngine = [&](QQmlApplicationEngine &engine) {
+        QObject::connect(&translations, &Translations::languageChanged, &engine, &QQmlEngine::retranslate);
+        QObject::connect(&engine, &QQmlApplicationEngine::objectCreationFailed, &application,
+                         [] { QCoreApplication::exit(EXIT_FAILURE); }, Qt::QueuedConnection);
+    };
+
+#ifdef SWIFTIFY_HAS_YOUTUBE_CLIENT
+    if (catalogueMode) {
+        youtube::YouTubeController music;
+        QQmlApplicationEngine engine;
+        configureEngine(engine);
+        QObject::connect(&instance, &SingleInstance::commandReceived, &engine, [&engine] {
+            if (auto *window = qobject_cast<QWindow *>(engine.rootObjects().value(0))) {
+                window->showNormal();
+                window->raise();
+                window->requestActivate();
+            }
+        });
+        instance.listen();
+        engine.setInitialProperties({{QStringLiteral("music"), QVariant::fromValue(&music)}});
+        engine.loadFromModule("Swiftify", "YouTubeWindow");
+        return application.exec();
+    }
+#endif
+
+    ErrorCenter errors(nullptr);
     QNetworkAccessManager network;
     RustCore rustCore;
 #ifdef SWIFTIFY_HAS_SOLOIST
@@ -366,7 +402,7 @@ int main(int argc, char *argv[])
 #endif
 
     QQmlApplicationEngine engine;
-    QObject::connect(&translations, &Translations::languageChanged, &engine, &QQmlEngine::retranslate);
+    configureEngine(engine);
 #ifdef Q_OS_WIN
     WindowsIntegration windowsIntegration(&player, &theme);
     engine.setInitialProperties({{QStringLiteral("visible"), false}});
@@ -379,11 +415,9 @@ int main(int argc, char *argv[])
     });
 #endif
     engine.addImageProvider(QStringLiteral("art"), new ArtworkImageProvider);
-    QObject::connect(&engine, &QQmlApplicationEngine::objectCreationFailed, &application,
-                     [] { QCoreApplication::exit(EXIT_FAILURE); }, Qt::QueuedConnection);
     engine.loadFromModule("Swiftify", "Main");
     // the first launch carries out its own command too, once the window exists
-    if (const QString command = SingleInstance::commandFrom(QCoreApplication::arguments()); command != QLatin1StringView("raise")) {
+    if (command != QLatin1StringView("raise")) {
         app.handleCommand(command);
     }
 

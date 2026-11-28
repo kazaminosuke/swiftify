@@ -86,6 +86,7 @@ public:
     void play() override;
     void pause() override;
     void seek(quint32 positionMs) override;
+    QCoro::Task<> seekAsync(quint32 positionMs) override;
     void setVolume(float volume) override;
     float volume() const override { return m_volume; }
     void setStreamQuality(int kbps) override;
@@ -99,6 +100,7 @@ public:
     bool audioOutputStalled() const override;
     quint32 playbackPositionMs() const override;
     quint32 playbackDurationMs() const override;
+    PlaybackClock playbackClock() const override;
     bool takeEndOfTrack() override;
 
     void setSpectrumEnabled(bool enabled) override;

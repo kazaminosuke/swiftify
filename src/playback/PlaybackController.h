@@ -78,6 +78,9 @@ class PlaybackController : public QObject {
     Q_PROPERTY(bool loadingLyrics READ isLoadingLyrics NOTIFY lyricsChanged FINAL)
     Q_PROPERTY(QString lyricsMessage READ lyricsMessage NOTIFY lyricsChanged FINAL)
     Q_PROPERTY(int activeLyricIndex READ activeLyricIndex NOTIFY activeLyricIndexChanged FINAL)
+    Q_PROPERTY(int activeLyricWord READ activeLyricWord NOTIFY activeLyricWordChanged FINAL)
+    Q_PROPERTY(bool canEditLyrics READ canEditLyrics NOTIFY lyricsChanged FINAL)
+    Q_PROPERTY(int lyricsDelayMs READ lyricsDelayMs WRITE setLyricsDelayMs NOTIFY lyricsDelayChanged FINAL)
 
     Q_PROPERTY(bool showingLyrics READ isShowingLyrics WRITE setShowingLyrics NOTIFY panelsChanged FINAL)
     Q_PROPERTY(bool showingQueue READ isShowingQueue WRITE setShowingQueue NOTIFY panelsChanged FINAL)
@@ -139,6 +142,10 @@ public:
     bool isLoadingLyrics() const { return m_loadingLyrics; }
     QString lyricsMessage() const { return m_lyricsMessage; }
     int activeLyricIndex() const { return m_activeLyricIndex; }
+    int activeLyricWord() const { return m_activeLyricWord; }
+    bool canEditLyrics() const;
+    int lyricsDelayMs() const { return m_lyricsDelayMs; }
+    void setLyricsDelayMs(int delayMs);
 
     bool isShowingLyrics() const { return m_showingLyrics; }
     bool isShowingQueue() const { return m_showingQueue; }
@@ -199,6 +206,8 @@ public:
     Q_INVOKABLE void toggleLyricsPanel();
     Q_INVOKABLE void toggleQueuePanel();
     Q_INVOKABLE void seekToLyricLine(int index);
+    Q_INVOKABLE QVariantMap lyricLineForEditing(int index) const;
+    Q_INVOKABLE bool saveLyricLine(int index, QString timeMs, QString text);
     Q_INVOKABLE void startSleepTimer(int seconds, const QString &fade);
     Q_INVOKABLE void cancelSleepTimer();
 
@@ -221,6 +230,8 @@ signals:
     void queueChanged();
     void lyricsChanged();
     void activeLyricIndexChanged();
+    void activeLyricWordChanged();
+    void lyricsDelayChanged();
     void panelsChanged();
     void sleepTimerChanged();
     void analysisActiveChanged();
@@ -236,6 +247,7 @@ private:
     QCoro::Task<> runStartPlayback(Song song, CancelToken token, bool fromSearch, bool steppingBack,
                                    quint32 crossfadeDurationMs, quint32 initialPositionMs);
     QCoro::Task<> runResume(CancelToken token);
+    QCoro::Task<> runSeek(quint32 positionMs, CancelToken token);
     QCoro::Task<> restartAudioOutput(CancelToken token);
     QCoro::Task<> runLoadLyrics(Song song, CancelToken token);
     void cancelPlaybackRequest();
@@ -266,6 +278,7 @@ private:
     void syncMediaSession();
     void reset();
     void restorePlaybackState();
+    void restoreLyricsDelay();
     void savePlaybackState();
     void schedulePlaybackSave();
     bool isCurrent(const Song &song) const { return m_currentSong && m_currentSong->isSameInstance(song); }
@@ -299,6 +312,7 @@ private:
     /// whatever is asking the core to make sound right now: a song loading, a
     /// resume, an output rebuild. empty once it finished or was withdrawn.
     TaskSlot m_playbackRequest;
+    TaskSlot m_seekRequest;
     bool m_playbackNeedsLoad = false;
     bool m_restoredPlayback = false;
     quint32 m_resumePositionMs = 0;
@@ -315,6 +329,8 @@ private:
     quint32 m_publishedPositionMs = 0;
     quint32 m_durationMs = 0;
     quint32 m_lastSyncedMediaPosition = std::numeric_limits<quint32>::max();
+    quint64 m_clockRevision = 0;
+    bool m_localClock = false;
     quint64 m_crossfadeSerial = 0;
     bool m_crossfadeStarted = false;
     quint32 m_crossfadeMs = 0;
@@ -334,6 +350,8 @@ private:
     bool m_loadingLyrics = false;
     QString m_lyricsMessage;
     int m_activeLyricIndex = -1;
+    int m_activeLyricWord = -1;
+    int m_lyricsDelayMs = 0;
     bool m_showingLyrics = true;
     bool m_showingQueue = false;
 

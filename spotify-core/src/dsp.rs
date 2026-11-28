@@ -27,7 +27,9 @@ use std::{
     },
 };
 
-use librespot::playback::{NUM_CHANNELS, SAMPLE_RATE};
+use librespot::playback::NUM_CHANNELS;
+#[cfg(test)]
+use librespot::playback::SAMPLE_RATE;
 
 const CHANNELS: usize = NUM_CHANNELS as usize;
 
@@ -162,17 +164,19 @@ pub(crate) struct DspProcessor {
     shared: SharedDsp,
     settings: DspSettings,
     generation: u64,
-    equalizers: [ChannelEqualizer; CHANNELS],
+    equalizers: Vec<ChannelEqualizer>,
     resampler: Resampler,
     stretch: TimeStretch,
 }
 
 impl DspProcessor {
-    pub(crate) fn new(shared: SharedDsp) -> Self {
+    pub(crate) fn new(shared: SharedDsp, sample_rate: u32, channels: u16) -> Self {
         let settings = shared.get();
         Self {
             generation: shared.generation(),
-            equalizers: std::array::from_fn(|_| ChannelEqualizer::new(settings.gains_db)),
+            equalizers: (0..channels)
+                .map(|_| ChannelEqualizer::new(settings.gains_db, sample_rate))
+                .collect(),
             resampler: Resampler::default(),
             stretch: TimeStretch::new(),
             settings,
@@ -199,8 +203,9 @@ impl DspProcessor {
         }
 
         if self.settings.equalizes() {
+            let channels = self.equalizers.len();
             for (index, sample) in samples.iter_mut().enumerate() {
-                *sample = self.equalizers[index % CHANNELS].process(*sample);
+                *sample = self.equalizers[index % channels].process(*sample);
             }
         }
 
@@ -217,6 +222,23 @@ impl DspProcessor {
         samples
     }
 
+    pub(crate) fn tempo(&self) -> f32 {
+        self.settings.tempo
+    }
+
+    /// Emit the pending overlap at local-file EOF. Limit the padding to the
+    /// requested output length so zero input does not extend the recording.
+    pub(crate) fn finish(&mut self, frames: usize) -> Vec<f32> {
+        let stretch = self.settings.stretch_factor();
+        if frames == 0 || (stretch - 1.0).abs() <= 1e-4 {
+            return Vec::new();
+        }
+        let padding = (frames as f64 / f64::from(stretch)).ceil() as usize + FRAME + 2 * SEARCH as usize;
+        let mut tail = self.stretch.process(&vec![0.0; padding * CHANNELS], stretch);
+        tail.truncate(frames * CHANNELS);
+        tail
+    }
+
     /// the equalizer alone, in place: for live audio, which can be neither
     /// slowed down nor sped up, so tempo and pitch are left out
     pub(crate) fn equalize(&mut self, samples: &mut [f32]) {
@@ -228,8 +250,9 @@ impl DspProcessor {
             }
         }
         if self.settings.equalizes() {
+            let channels = self.equalizers.len();
             for (index, sample) in samples.iter_mut().enumerate() {
-                *sample = self.equalizers[index % CHANNELS].process(*sample);
+                *sample = self.equalizers[index % channels].process(*sample);
             }
         }
     }
@@ -245,6 +268,16 @@ impl DspProcessor {
             for equalizer in &mut self.equalizers {
                 equalizer.retune(settings.gains_db);
             }
+        }
+        // A disabled transform must not replay buffered audio if it is
+        // enabled again later within the same track.
+        if (settings.stretch_factor() - 1.0).abs() <= 1e-4
+            && (self.settings.stretch_factor() - 1.0).abs() > 1e-4
+        {
+            self.stretch = TimeStretch::new();
+        }
+        if (settings.resample_ratio() - 1.0).abs() <= 1e-4 {
+            self.resampler = Resampler::default();
         }
         self.settings = settings;
     }
@@ -268,9 +301,15 @@ struct Biquad {
 
 impl Biquad {
     /// rbj cookbook peaking eq.
-    fn peaking(frequency: f32, q: f32, gain_db: f32) -> Self {
+    fn peaking(frequency: f32, q: f32, gain_db: f32, sample_rate: u32) -> Self {
+        if gain_db == 0.0 || frequency >= sample_rate as f32 / 2.0 {
+            return Self {
+                b0: 1.0,
+                ..Default::default()
+            };
+        }
         let amplitude = 10f32.powf(gain_db / 40.0);
-        let omega = TAU * frequency / SAMPLE_RATE as f32;
+        let omega = TAU * frequency / sample_rate as f32;
         let (sin, cos) = (omega.sin(), omega.cos());
         let alpha = sin / (2.0 * q);
 
@@ -299,13 +338,15 @@ impl Biquad {
 
 struct ChannelEqualizer {
     bands: [Biquad; EQ_BAND_COUNT],
+    sample_rate: u32,
     active: bool,
 }
 
 impl ChannelEqualizer {
-    fn new(gains_db: [f32; EQ_BAND_COUNT]) -> Self {
+    fn new(gains_db: [f32; EQ_BAND_COUNT], sample_rate: u32) -> Self {
         let mut equalizer = Self {
             bands: [Biquad::default(); EQ_BAND_COUNT],
+            sample_rate,
             active: false,
         };
         equalizer.retune(gains_db);
@@ -317,7 +358,7 @@ impl ChannelEqualizer {
     fn retune(&mut self, gains_db: [f32; EQ_BAND_COUNT]) {
         self.active = gains_db.iter().any(|gain| gain.abs() > 0.01);
         for (index, gain) in gains_db.iter().enumerate() {
-            let tuned = Biquad::peaking(EQ_FREQUENCIES[index], EQ_Q, *gain);
+            let tuned = Biquad::peaking(EQ_FREQUENCIES[index], EQ_Q, *gain, self.sample_rate);
             let band = &mut self.bands[index];
             band.b0 = tuned.b0;
             band.b1 = tuned.b1;
@@ -571,7 +612,7 @@ mod tests {
     #[test]
     fn a_flat_chain_returns_the_audio_untouched() {
         let shared = SharedDsp::new();
-        let mut processor = DspProcessor::new(shared);
+        let mut processor = DspProcessor::new(shared, SAMPLE_RATE, NUM_CHANNELS as u16);
         let input = tone(440.0, 0.2);
         assert_eq!(processor.process(input.clone()), input);
     }
@@ -582,7 +623,7 @@ mod tests {
         let mut settings = DspSettings::default();
         settings.preamp_db = 6.0;
         shared.set(settings);
-        let mut processor = DspProcessor::new(shared);
+        let mut processor = DspProcessor::new(shared, SAMPLE_RATE, NUM_CHANNELS as u16);
 
         let input = tone(440.0, 0.1);
         let output = processor.process(input.clone());
@@ -599,10 +640,37 @@ mod tests {
     }
 
     #[test]
+    fn live_eq_uses_its_input_rate_and_keeps_mono_filter_state() {
+        let shared = SharedDsp::new();
+        let mut gains_db = [0.0; EQ_BAND_COUNT];
+        gains_db[5] = 12.0;
+        shared.set(DspSettings {
+            gains_db,
+            ..DspSettings::default()
+        });
+
+        let rate = 96_000;
+        let signal: Vec<f32> = (0..rate / 10)
+            .map(|frame| (TAU * 15_000.0 * frame as f32 / rate as f32).sin() * 0.1)
+            .collect();
+        let mut boosted = signal.clone();
+        DspProcessor::new(shared.clone(), rate, 1).equalize(&mut boosted);
+        let peak = boosted
+            .iter()
+            .copied()
+            .fold(0.0_f32, |peak, sample| peak.max(sample.abs()));
+        assert!((0.37..0.41).contains(&peak), "unexpected peak {peak}");
+
+        let mut below_nyquist = signal.clone();
+        DspProcessor::new(shared, 24_000, 1).equalize(&mut below_nyquist);
+        assert_eq!(below_nyquist, signal);
+    }
+
+    #[test]
     fn halving_the_tempo_doubles_the_length_and_keeps_the_pitch() {
         let shared = SharedDsp::new();
         shared.set(settings(0.5, 0.0, true));
-        let mut processor = DspProcessor::new(shared);
+        let mut processor = DspProcessor::new(shared, SAMPLE_RATE, NUM_CHANNELS as u16);
 
         let mut output = Vec::new();
         for _ in 0..40 {
@@ -627,7 +695,7 @@ mod tests {
     fn letting_pitch_follow_the_tempo_lowers_the_tone() {
         let shared = SharedDsp::new();
         shared.set(settings(0.5, 0.0, false));
-        let mut processor = DspProcessor::new(shared);
+        let mut processor = DspProcessor::new(shared, SAMPLE_RATE, NUM_CHANNELS as u16);
 
         let mut output = Vec::new();
         for _ in 0..20 {
@@ -645,7 +713,7 @@ mod tests {
     fn an_octave_of_pitch_doubles_the_frequency_and_keeps_the_length() {
         let shared = SharedDsp::new();
         shared.set(settings(1.0, 12.0, true));
-        let mut processor = DspProcessor::new(shared);
+        let mut processor = DspProcessor::new(shared, SAMPLE_RATE, NUM_CHANNELS as u16);
 
         let mut output = Vec::new();
         for _ in 0..40 {
@@ -672,10 +740,10 @@ mod tests {
         let mut boosted = DspSettings::default();
         boosted.gains_db[0] = 12.0;
         shared.set(boosted);
-        let mut processor = DspProcessor::new(shared);
+        let mut processor = DspProcessor::new(shared, SAMPLE_RATE, NUM_CHANNELS as u16);
 
         let bass = processor.process(tone(EQ_FREQUENCIES[0], 0.5));
-        let mut flat = DspProcessor::new(SharedDsp::new());
+        let mut flat = DspProcessor::new(SharedDsp::new(), SAMPLE_RATE, NUM_CHANNELS as u16);
         let air = processor.process(tone(EQ_FREQUENCIES[5], 0.5));
         let air_reference = flat.process(tone(EQ_FREQUENCIES[5], 0.5));
 

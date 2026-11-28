@@ -22,6 +22,17 @@ a spotify player for desktop, built with Qt Quick on top of a Rust core that wra
 
 </div>
 
+## YouTube catalogue in this fork
+
+The Windows and Linux builds with the YouTube client enabled open a Qt Quick
+catalogue for videos, channels and playlists. Guest search uses a configured
+API key. Read-only Google sign-in adds liked music and owned playlists.
+See the [catalogue setup](docs/youtube-catalogue.md) for credentials and
+coverage.
+
+Use `swiftify --spotify` for the Spotify and local-file workspace below.
+Builds with `-DSWIFTIFY_YOUTUBE_CLIENT=OFF` start that workspace directly.
+
 ## about
 
 it follows Material 3 Expressive (heavy inspo from end4) and has an immersive player,
@@ -241,7 +252,7 @@ bind = , XF86AudioPlay, exec, swiftify --play-pause
 
 ## building from source
 
-- Qt 6.10 or newer with Qt Base, Qt Declarative, Qt Shader Tools and Qt WebSockets
+- Qt 6.10 or newer with Qt Base, Qt Declarative, Qt Shader Tools and Qt WebSockets (plus Qt Network Authorization for the YouTube client)
 - QtKeychain and QCoro 0.10 or newer, both built for Qt 6
 - CMake 3.24 or newer, Ninja, and a C++20 compiler
 - Rust (stable, from [rustup](https://rustup.rs))
@@ -293,7 +304,7 @@ or use cmake
 
 ```sh
 # replace with your package manager if not on arch
-sudo pacman -S --needed git qt6-base qt6-declarative qt6-shadertools qt6-wayland qt6-websockets qtkeychain-qt6 qcoro libpulse alsa-lib openssl cmake ninja rust pkgconf
+sudo pacman -S --needed git qt6-base qt6-declarative qt6-shadertools qt6-wayland qt6-websockets qt6-networkauth qtkeychain-qt6 qcoro libpulse alsa-lib openssl cmake ninja rust pkgconf
 
 git clone https://github.com/swiftify-org/swiftify.git
 cd swiftify
@@ -307,7 +318,7 @@ compatibility patches automatically
 
 ```sh
 sudo apt-get install git qt6-base-dev qt6-declarative-dev qt6-shader-baker \
-    qt6-shadertools-dev qt6-wayland qt6-websockets-dev qtkeychain-qt6-dev qcoro-qt6-dev \
+    qt6-shadertools-dev qt6-wayland qt6-websockets-dev qt6-networkauth-dev qtkeychain-qt6-dev qcoro-qt6-dev \
     libpulse-dev libasound2-dev libssl-dev cmake ninja-build pkg-config
 # install rust from https://rustup.rs if you dont have it
 
@@ -346,7 +357,7 @@ the tray. `-DSWIFTIFY_DESKTOP_INTEGRATION=OFF` turns those off.
 
 install these
 
-- **Qt 6.10** with *Qt Shader Tools* and *Qt WebSockets*, **CMake** and **Ninja** from the **Qt online Installer**
+- **Qt 6.10** with *Qt Shader Tools*, *Qt WebSockets* and *Qt Network Authorization*, **CMake** and **Ninja** from the **Qt online Installer**
 - **Rust** from [rustup](https://rustup.rs)
 - **git** from [git-scm.com](https://git-scm.com/install/)
 

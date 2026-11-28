@@ -393,6 +393,27 @@ async_call!(
     }
 );
 
+/// Seeks on a worker and reports completion with the given request ID.
+///
+/// # Safety
+/// `core` is null or a live core.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn swiftify_core_seek_async(
+    core: *const SwiftifyCore,
+    request_id: u64,
+    position_ms: u32,
+) {
+    // SAFETY: forwarded from the caller.
+    let Some(handle) = (unsafe { handle(core) }) else { return };
+    let ticket = handle.core.begin_seek();
+    handle.spawn(request_id, move |core| async move {
+        tokio::task::spawn_blocking(move || core.seek_as(position_ms, ticket))
+            .await
+            .map_err(|error| format!("seek worker failed: {error}"))?
+            .map(|()| Unit)
+    });
+}
+
 /// starts a preloaded track and overlaps it with the one already playing.
 ///
 /// # Safety
@@ -653,6 +674,47 @@ macro_rules! query {
     };
 }
 
+#[derive(Default)]
+#[repr(C)]
+pub struct SwiftifyPlaybackClock {
+    revision: u64,
+    position_ms: u32,
+    duration_ms: u32,
+    submitted_ms: u32,
+    latency_ms: u32,
+    flags: u32,
+}
+
+/// # Safety
+/// `core` is null or live, and `output` is null or writable for this call.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn swiftify_core_playback_clock(
+    core: *const SwiftifyCore,
+    output: *mut SwiftifyPlaybackClock,
+) -> bool {
+    // SAFETY: forwarded from the caller.
+    let Some(handle) = (unsafe { handle(core) }) else { return false };
+    if output.is_null() {
+        return false;
+    }
+    let clock = handle.core.playback_clock();
+    let flags = u32::from(clock.local)
+        | (u32::from(clock.latency_ms.is_some()) << 1)
+        | (u32::from(clock.drained) << 2);
+    // SAFETY: the caller supplies writable memory and need not initialize it.
+    unsafe {
+        output.write(SwiftifyPlaybackClock {
+            revision: clock.revision,
+            position_ms: clock.position_ms,
+            duration_ms: clock.duration_ms,
+            submitted_ms: clock.submitted_ms,
+            latency_ms: clock.latency_ms.unwrap_or_default(),
+            flags,
+        });
+    }
+    true
+}
+
 query!(swiftify_core_session_is_valid -> bool, false, |core| core.session_is_valid());
 query!(swiftify_core_audio_output_stalled -> bool, false, |core| core.audio_output_stalled());
 query!(swiftify_core_playback_position_ms -> u32, 0, |core| core.playback_position_ms());
@@ -716,17 +778,28 @@ pub unsafe extern "C" fn swiftify_equalizer_frequencies(out: *mut f32, capacity:
 
 #[cfg(test)]
 mod tests {
-    use std::{io::Read, time::Duration};
+    #[cfg(unix)]
+    use std::io::Read;
+    use std::time::Duration;
 
     use super::*;
 
     fn wait_for_completion(core: *const SwiftifyCore) -> (u64, bool, String) {
         let fd = unsafe { swiftify_core_completion_fd(core) };
-        assert!(fd >= 0);
-        let reader = unsafe { &(&*core).completions.receiver };
+        #[cfg(unix)]
+        let mut reader = {
+            assert!(fd >= 0);
+            unsafe { &(&*core).completions.receiver }
+        };
+        #[cfg(not(unix))]
+        assert_eq!(fd, -1);
+
         for _ in 0..200 {
-            let mut byte = [0; 16];
-            let _ = (&*reader).read(&mut byte);
+            #[cfg(unix)]
+            {
+                let mut byte = [0; 16];
+                let _ = reader.read(&mut byte);
+            }
             let mut request_id = 0;
             let mut ok = true;
             let mut payload = ptr::null_mut();
@@ -755,6 +828,69 @@ mod tests {
         assert!(!ok);
         assert!(!payload.is_empty());
         unsafe { swiftify_core_free(core) };
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    #[ignore = "requires the ALSA null configuration from native-audio CI"]
+    fn local_clock_tracks_dsp_and_paused_async_seek() {
+        let path = std::env::temp_dir().join(format!("swiftify-clock-{}.wav", std::process::id()));
+        let mut wav = hound::WavWriter::create(&path, hound::WavSpec {
+            channels: 1,
+            sample_rate: 48_000,
+            bits_per_sample: 16,
+            sample_format: hound::SampleFormat::Int,
+        }).unwrap();
+        for frame in 0..96_000 {
+            wav.write_sample(if frame % 120 < 60 { 3_000i16 } else { -3_000 }).unwrap();
+        }
+        wav.finalize().unwrap();
+        let path_text = CString::new(path.to_str().unwrap()).unwrap();
+        let core = swiftify_core_new();
+        let read = || {
+            let mut snapshot = SwiftifyPlaybackClock::default();
+            assert!(unsafe { swiftify_core_playback_clock(core, &mut snapshot) });
+            snapshot
+        };
+        assert_eq!(read().flags, 0);
+        unsafe { swiftify_core_set_playback_shaping(core, 1.25, 0.0, true) };
+        unsafe { swiftify_core_play_file(core, 10, path_text.as_ptr()) };
+        let (id, ok, error) = wait_for_completion(core);
+        assert_eq!(id, 10);
+        assert!(ok, "{error}");
+        assert!(unsafe { swiftify_core_pause(core) }.is_null());
+
+        let prior = read();
+        assert_eq!(prior.flags & 1, 1);
+        assert_eq!(prior.duration_ms, 2_000);
+        unsafe { swiftify_core_seek_async(core, 11, 800) };
+        let (id, ok, error) = wait_for_completion(core);
+        assert_eq!(id, 11);
+        assert!(ok, "{error}");
+        let sought = read();
+        assert_ne!(sought.revision, prior.revision);
+        assert_eq!((sought.position_ms, sought.submitted_ms), (800, 800));
+        std::thread::sleep(Duration::from_millis(120));
+        assert_eq!(read().position_ms, 800);
+
+        assert!(unsafe { swiftify_core_play(core) }.is_null());
+        let deadline = std::time::Instant::now() + Duration::from_secs(4);
+        let mut ended = false;
+        while std::time::Instant::now() < deadline {
+            let snapshot = read();
+            assert!(snapshot.position_ms <= snapshot.submitted_ms);
+            if unsafe { swiftify_core_take_end_of_track(core) } {
+                assert_eq!(snapshot.revision, sought.revision);
+                assert!(snapshot.position_ms >= 1_960);
+                ended = true;
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert!(ended);
+        assert!(!unsafe { swiftify_core_take_end_of_track(core) });
+        unsafe { swiftify_core_free(core) };
+        std::fs::remove_file(path).unwrap();
     }
 
     #[test]

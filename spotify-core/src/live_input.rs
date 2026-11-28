@@ -227,12 +227,14 @@ impl LiveSource {
         dsp: SharedDsp,
         spectrum: SharedSpectrum,
     ) -> Self {
+        let channels = channels.clamp(1, u16::MAX as u32) as u16;
+        let rate = rate.max(1);
         Self {
             buffer,
-            channels: channels.clamp(1, u16::MAX as u32) as u16,
-            rate: rate.max(1),
+            channels,
+            rate,
             cancel,
-            dsp: DspProcessor::new(dsp),
+            dsp: DspProcessor::new(dsp, rate, channels),
             spectrum,
             analysis_samples: [0.0; ANALYSIS_SAMPLE_COUNT],
             analysis_index: 0,

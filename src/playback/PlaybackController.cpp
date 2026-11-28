@@ -25,9 +25,11 @@
 #include "playback/PlaybackState.h"
 
 #include <QCoreApplication>
+#include <QCryptographicHash>
 #include <QLoggingCategory>
 #include <QQmlEngine>
 #include <QRandomGenerator>
+#include <QSaveFile>
 
 #include <QCoroTimer>
 
@@ -48,6 +50,14 @@ PlaybackController *s_instance = nullptr;
 const QString kCatchphrase = QStringLiteral("i mean i guess bro");
 const QString kVolumeKey = QStringLiteral("playerVolume");
 const QString kVolumeBeforeMuteKey = QStringLiteral("playerVolumeBeforeMute");
+const QString kLyricsDelayKey = QStringLiteral("lyricsDelayMs");
+constexpr int kLyricsDelayLimitMs = 10'000;
+
+QString trackLyricsDelayKey(const Song &song)
+{
+    const auto id = QCryptographicHash::hash(song.uri.toUtf8(), QCryptographicHash::Sha256).toHex();
+    return QStringLiteral("trackLyricsDelayMs/") + QString::fromLatin1(id);
+}
 const QString kPlaybackStateKey = QStringLiteral("lastPlaybackState");
 
 /// a restart is offered after this much of a song has played
@@ -103,6 +113,7 @@ PlaybackController::PlaybackController(PlaybackCore *core, SpotifySession *sessi
     connect(m_session, &SpotifySession::loggedOut, this, &PlaybackController::reset);
 
     restorePlaybackState();
+    restoreLyricsDelay();
     m_checkpointTimer.setInterval(5000);
     connect(&m_checkpointTimer, &QTimer::timeout, this, &PlaybackController::savePlaybackState);
     m_saveTimer.setSingleShot(true);
@@ -127,6 +138,7 @@ PlaybackController::~PlaybackController()
 {
     savePlaybackState();
     m_playbackRequest.cancel();
+    m_seekRequest.cancel();
     m_lyricsRequest.cancel();
     if (s_instance == this) {
         s_instance = nullptr;
@@ -255,9 +267,11 @@ void PlaybackController::followRemoteVolume(float volume)
 
 void PlaybackController::setCurrentSong(const std::optional<Song> &song, quint32 crossfadeMs)
 {
+    m_seekRequest.cancel();
     const bool changed = song.has_value() != m_currentSong.has_value()
         || (song && m_currentSong && !song->isSameInstance(*m_currentSong));
     m_currentSong = song;
+    restoreLyricsDelay();
     m_crossfadeMs = crossfadeMs;
     m_crossfadeDeadline.setRemainingTime(qint64(crossfadeMs));
     if (changed) {
@@ -780,7 +794,10 @@ QCoro::Task<> PlaybackController::runStartPlayback(Song song, CancelToken token,
         }
         throwIfCancelled(token);
         if (!isCurrent(song)) throw Cancelled();
-        if (initialPositionMs > 0) m_core->seek(initialPositionMs);
+        if (initialPositionMs > 0) {
+            co_await m_core->seekAsync(initialPositionMs);
+            throwIfCancelled(token);
+        }
     } catch (const Cancelled &) {
         // a logout replaced the core or the session under this request.
         cancelled = true;
@@ -892,6 +909,7 @@ QCoro::Task<> PlaybackController::runResume(CancelToken token)
 void PlaybackController::cancelPlaybackRequest()
 {
     m_playbackRequest.cancel();
+    m_seekRequest.cancel();
 }
 
 void PlaybackController::silenceWithdrawnPlayback()
@@ -962,7 +980,11 @@ QCoro::Task<> PlaybackController::restartAudioOutput(CancelToken token)
             co_return;
         }
         if (position > 0) {
-            m_core->seek(position);
+            co_await m_core->seekAsync(position);
+            throwIfCancelled(token);
+            if (!isCurrent(song)) {
+                co_return;
+            }
         }
         m_playbackNeedsLoad = false;
         setStatus(QStringLiteral("Playing"));
@@ -1089,25 +1111,45 @@ void PlaybackController::seek(int requestedMs)
         syncMediaSession();
         return;
     }
+    detach(runSeek(positionMs, m_seekRequest.renew()));
+}
+
+QCoro::Task<> PlaybackController::runSeek(quint32 positionMs, CancelToken token)
+{
     try {
-        m_core->seek(positionMs);
-        // whatever the core had queued about the old position is moot now,
-        // including an end-of-track that would otherwise skip the song.
-        m_core->takeEndOfTrack();
-        setLivePosition(positionMs);
-        // librespot reports loading while it re-buffers, which parks its
-        // timeline as paused.
-        if (m_playing) {
-            m_core->play();
-        } else if (!m_playbackRequest.isRunning()) {
-            // a seek is never what starts the sound.
-            m_core->pause();
+        co_await m_core->seekAsync(positionMs);
+        if (isCancelled(token)) {
+            co_return;
+        }
+        const auto clock = m_core->playbackClock();
+        if (clock.local) {
+            setLivePosition(clock.positionMs);
+        } else {
+            // Clear any end event from before a streaming seek. The local
+            // renderer scopes EOF to its current source and clock revision.
+            m_core->takeEndOfTrack();
+            setLivePosition(positionMs);
+            if (m_playing) {
+                m_core->play();
+            } else if (!m_playbackRequest.isRunning()) {
+                m_core->pause();
+            }
         }
         syncMediaSession();
         schedulePlaybackSave();
+    } catch (const Cancelled &) {
+        if (isCancelled(token)) {
+            co_return;
+        }
     } catch (const SpotifyError &error) {
-        reportError(QStringLiteral("Seeking playback"), error.message());
+        if (isCancelled(token)) {
+            co_return;
+        }
+        if (error.kind() != SpotifyError::Kind::Superseded) {
+            reportError(QStringLiteral("Seeking playback"), error.message());
+        }
     }
+    m_seekRequest.finish(token);
 }
 
 void PlaybackController::seekBy(int offsetMs)
@@ -1239,7 +1281,7 @@ void PlaybackController::pollPlayback()
             }
         }
     }
-    if (m_core->takeEndOfTrack() && isPlaybackAtEnd()) {
+    if (!m_seekRequest.isRunning() && m_core->takeEndOfTrack() && (m_localClock || isPlaybackAtEnd())) {
         handleEndOfTrack();
     }
     stopIfAudioOutputStalled();
@@ -1247,13 +1289,19 @@ void PlaybackController::pollPlayback()
 
 void PlaybackController::syncPositionAndDuration()
 {
-    const quint32 position = m_core->playbackPositionMs();
-    const quint32 duration = m_core->playbackDurationMs();
+    const auto clock = m_core->playbackClock();
+    const quint32 position = clock.positionMs;
+    const bool changedClock = m_localClock != clock.local || m_clockRevision != clock.revision;
+    if (m_localClock != clock.local) {
+        m_pollTimer.setInterval(clock.local ? 50 : 250);
+    }
+    m_clockRevision = clock.revision;
+    m_localClock = clock.local;
     if (position != m_livePositionMs) {
         setLivePosition(position);
     }
-    setDuration(duration);
-    if (std::abs(qint64(position) - qint64(m_lastSyncedMediaPosition)) >= 1000) {
+    setDuration(clock.durationMs);
+    if (changedClock || std::abs(qint64(position) - qint64(m_lastSyncedMediaPosition)) >= 1000) {
         m_lastSyncedMediaPosition = position;
         syncMediaSession();
     }
@@ -1360,13 +1408,91 @@ QCoro::Task<> PlaybackController::runLoadLyrics(Song song, CancelToken token)
     updateActiveLyricLine();
 }
 
+void PlaybackController::restoreLyricsDelay()
+{
+    const QVariant fallback = m_settings->value(kLyricsDelayKey, 0);
+    const int saved = m_currentSong
+        ? m_settings->value(trackLyricsDelayKey(*m_currentSong), fallback).toInt()
+        : fallback.toInt();
+    const int delay = std::clamp(saved, -kLyricsDelayLimitMs, kLyricsDelayLimitMs);
+    if (m_lyricsDelayMs != delay) {
+        m_lyricsDelayMs = delay;
+        emit lyricsDelayChanged();
+    }
+}
+
+void PlaybackController::setLyricsDelayMs(int delayMs)
+{
+    const int delay = std::clamp(delayMs, -kLyricsDelayLimitMs, kLyricsDelayLimitMs);
+    if (m_lyricsDelayMs == delay) {
+        return;
+    }
+    m_lyricsDelayMs = delay;
+    const QString key = m_currentSong ? trackLyricsDelayKey(*m_currentSong) : kLyricsDelayKey;
+    m_settings->setValue(key, delay);
+    emit lyricsDelayChanged();
+    updateActiveLyricLine();
+}
+
 void PlaybackController::updateActiveLyricLine()
 {
-    const int index = m_lyrics ? m_lyrics->lineIndex(m_livePositionMs) : -1;
-    if (index != m_activeLyricIndex) {
-        m_activeLyricIndex = index;
+    const qint64 position = qint64(m_livePositionMs) - m_lyricsDelayMs;
+    const int index = m_lyrics ? m_lyrics->lineIndex(position) : -1;
+    const int word = m_lyrics ? m_lyrics->wordIndex(index, position) : -1;
+    const bool changedLine = index != m_activeLyricIndex;
+    const bool changedWord = word != m_activeLyricWord;
+    m_activeLyricIndex = index;
+    m_activeLyricWord = word;
+    if (changedLine) {
         emit activeLyricIndexChanged();
     }
+    if (changedWord) {
+        emit activeLyricWordChanged();
+    }
+}
+
+bool PlaybackController::canEditLyrics() const
+{
+    return m_currentSong && m_currentSong->isLocalFile()
+        && m_lyrics && m_lyrics->synchronized && !m_lyrics->lines.isEmpty() && !m_loadingLyrics;
+}
+
+QVariantMap PlaybackController::lyricLineForEditing(int index) const
+{
+    if (!canEditLyrics() || index < 0 || index >= m_lyrics->lines.size()) {
+        return {};
+    }
+    const auto &line = m_lyrics->lines.at(index);
+    return {{QStringLiteral("time"), QString::number(line.startTimeMs)},
+            {QStringLiteral("text"), line.words}, {QStringLiteral("track"), m_currentSong->uri}};
+}
+
+bool PlaybackController::saveLyricLine(int index, QString timeMs, QString text)
+{
+    if (!canEditLyrics()) {
+        return false;
+    }
+    bool valid = false;
+    const quint32 time = timeMs.toUInt(&valid);
+    Lyrics edited = *m_lyrics;
+    if (!valid || !edited.editLine(index, time, text)) {
+        reportError(QStringLiteral("Saving lyrics"), QStringLiteral("Enter a time in milliseconds and nonempty text."));
+        return false;
+    }
+
+    const QByteArray document = edited.toTtml();
+    QSaveFile file(Lyrics::editedPath(m_currentSong->localPath()));
+    if (document.isEmpty() || !file.open(QIODevice::WriteOnly)
+        || file.write(document) != document.size() || !file.commit()) {
+        reportError(QStringLiteral("Saving lyrics"), QStringLiteral("The local lyrics file could not be written."));
+        return false;
+    }
+    edited.provider = QStringLiteral("TTML file");
+    m_lyrics = std::move(edited);
+    m_lyricsModel->setLines(m_lyrics->lines);
+    updateActiveLyricLine();
+    emit lyricsChanged();
+    return true;
 }
 
 void PlaybackController::seekToLyricLine(int index)
@@ -1375,7 +1501,8 @@ void PlaybackController::seekToLyricLine(int index)
     if (!m_lyrics || !m_lyrics->synchronized || index < 0 || index >= m_lyrics->lines.size()) {
         return;
     }
-    seek(int(m_lyrics->lines.at(index).startTimeMs));
+    const qint64 destination = qint64(m_lyrics->lines.at(index).startTimeMs) + m_lyricsDelayMs;
+    seek(int(std::clamp<qint64>(destination, 0, std::numeric_limits<int>::max())));
 }
 
 void PlaybackController::setShowingLyrics(bool showing)
@@ -1494,6 +1621,7 @@ void PlaybackController::reset()
     m_settings->sync();
     m_remote = false;
     m_playbackRequest.cancel();
+    m_seekRequest.cancel();
     m_lyricsRequest.cancel();
     m_queue.clear();
     m_history.clear();

@@ -47,7 +47,7 @@ $script:failBuild = $false
 $script:msvcInitializations = 0
 $script:rustToolchains = @{}
 $script:compilerVersion = '15.1.0'
-$script:thirdPartyLicenses = @('material-color-utilities.LICENSE', 'rounded-polygon-qmljs.LICENSE', 'material-symbols.LICENSE', 'rust-crates.LICENSE', 'qt.LICENSE', 'qt.NOTICE', 'qtkeychain.LICENSE', 'qcoro.LICENSE')
+$script:thirdPartyLicenses = @('material-color-utilities.LICENSE', 'rounded-polygon-qmljs.LICENSE', 'material-symbols.LICENSE', 'rust-crates.LICENSE', 'qt.LICENSE', 'qt.NOTICE', 'qtkeychain.LICENSE', 'qcoro.LICENSE', 'YouTubeBrand.NOTICE')
 
 function New-FixtureFile {
     param([string]$Path, [string]$Content = 'fixture')
@@ -113,10 +113,14 @@ function Invoke-Native {
                 throw "Unexpected CMake invocation: $Arguments"
             }
         }
+        'ctest.exe' {
+            Assert-True ($Arguments -contains '--no-tests=error') 'CTest must reject a missing test selection.'
+        }
         'windeployqt.exe' {
             Assert-True (Test-Path -LiteralPath $Arguments[-1]) 'Swiftify must be installed before deployment.'
             New-FixtureFile (Join-Path (Split-Path -Parent $Arguments[-1]) 'libstdc++-6.dll') 'outdated deployment runtime'
             New-FixtureFile (Join-Path (Split-Path -Parent $Arguments[-1]) 'vc_redist.x64.exe') 'runtime installer'
+            New-FixtureFile (Join-Path (Split-Path -Parent $Arguments[-1]) 'Qt6NetworkAuth.dll')
         }
         default { throw "Unexpected command: $FilePath" }
     }
@@ -128,7 +132,7 @@ try {
     $buildRoot = Join-Path $fixture 'build'
     $installPrefix = Join-Path $fixture 'installed'
     New-FixtureFile "$qtPath\mkspecs\qconfig.pri" "QT_VERSION = 6.12.0`nQT_ARCH = x86_64`nQT_GCC_MAJOR_VERSION = 15`nQT_GCC_MINOR_VERSION = 1`nQT_GCC_PATCH_VERSION = 0"
-    foreach ($module in @('Qt6Core', 'Qt6Widgets', 'Qt6Quick', 'Qt6QuickControls2', 'Qt6ShaderTools', 'Qt6WebSockets')) {
+    foreach ($module in @('Qt6Core', 'Qt6Widgets', 'Qt6Quick', 'Qt6QuickControls2', 'Qt6ShaderTools', 'Qt6WebSockets', 'Qt6NetworkAuth')) {
         New-FixtureFile "$qtPath\lib\cmake\$module\${module}Config.cmake"
     }
     foreach ($file in @('gcc.exe', 'g++.exe', 'libstdc++-6.dll', 'libgcc_s_seh-1.dll', 'libwinpthread-1.dll')) {
@@ -136,9 +140,11 @@ try {
     }
     $env:QT_ROOT_DIR = $qtPath
     Assert-True ((Find-QtKit '') -eq $qtPath) 'Qt discovery must respect QT_ROOT_DIR.'
-    $parameters = @{ QtPath = $qtPath; MingwPath = $mingwPath; BuildRoot = $buildRoot; InstallPrefix = $installPrefix; Jobs = 2 }
+    $parameters = @{ QtPath = $qtPath; MingwPath = $mingwPath; BuildRoot = $buildRoot; InstallPrefix = $installPrefix; Jobs = 2; TestYouTube = $true }
     Invoke-WindowsBuild @parameters
     Assert-True (Test-Path -LiteralPath "$installPrefix\bin\swiftify.exe") 'Swiftify was not installed.'
+    Assert-True (@($script:invocations | Where-Object { $_.Arguments -contains 'tst_youtubeview' }).Count -eq 1) 'The YouTube QML test must be built.'
+    Assert-True (@($script:invocations | Where-Object { $_.Name -eq 'ctest.exe' }).Count -eq 1) 'The YouTube tests must be run.'
     Assert-True (Test-Path -LiteralPath "$installPrefix\share\licenses\swiftify\LICENSE") 'The license was not installed.'
     foreach ($license in $script:thirdPartyLicenses) {
         Assert-True (Test-Path -LiteralPath "$installPrefix\share\licenses\swiftify\$license") "$license was not installed."

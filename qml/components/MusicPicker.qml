@@ -57,7 +57,7 @@ Item {
         id: fileDialog
         title: root.playlistId.length > 0 ? qsTr("Add Tracks") : qsTr("Add Music Files")
         fileMode: FileDialog.OpenFiles
-        nameFilters: ["Music (*.mp3 *.flac *.ogg *.oga *.m4a *.mp4 *.aac *.wav *.aif *.aiff)"]
+        nameFilters: ["Music (*.mp3 *.flac *.ogg *.oga *.opus *.webm *.mka *.m4a *.mp4 *.aac *.wav *.aif *.aiff)"]
         onAccepted: root.add(selectedFiles)
     }
 }

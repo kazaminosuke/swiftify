@@ -30,6 +30,13 @@ struct SwiftifyLiveBuffer;
 
 namespace swiftify {
 
+struct PlaybackClock {
+    quint32 positionMs;
+    quint32 durationMs;
+    quint64 revision = 0;
+    bool local = false;
+};
+
 /// what the player asks of the audio core: the rust core in the app, a fake in
 /// tests. calls that can fail throw SpotifyError with the core's own message;
 /// async calls are cancelled (throw Cancelled) when the core is reset under them.
@@ -70,6 +77,7 @@ public:
     virtual void play() = 0;
     virtual void pause() = 0;
     virtual void seek(quint32 positionMs) = 0;
+    virtual QCoro::Task<> seekAsync(quint32 positionMs) { seek(positionMs); co_return; }
     virtual void setVolume(float volume) = 0;
     virtual float volume() const = 0;
     virtual void setStreamQuality(int kbps) = 0;
@@ -85,6 +93,7 @@ public:
     virtual bool audioOutputStalled() const = 0;
     virtual quint32 playbackPositionMs() const = 0;
     virtual quint32 playbackDurationMs() const = 0;
+    virtual PlaybackClock playbackClock() const { return {playbackPositionMs(), playbackDurationMs()}; }
     virtual bool takeEndOfTrack() = 0;
 
     /// plays what is pushed into `buffer` through the equalizer and the
