@@ -41,7 +41,7 @@
 
 namespace swiftify {
 
-Q_LOGGING_CATEGORY(lcPlayer, "swiftify.player")
+Q_LOGGING_CATEGORY(lcPlayer, "swiftify.player");
 
 namespace {
 
@@ -1220,6 +1220,20 @@ void PlaybackController::toggleShuffle()
         m_shuffledQueue.clear();
     }
     emit shuffleChanged();
+    queueDidChange();
+    syncMediaSession();
+}
+
+void PlaybackController::reshuffle() {
+    if (m_queue.isEmpty()) {
+        return;
+    }
+    if (!m_shuffle) {
+        m_shuffle = true;
+        emit shuffleChanged();
+    }
+    m_history.clear();
+    rebuildShuffledQueue(m_currentSong);
     queueDidChange();
     syncMediaSession();
 }
