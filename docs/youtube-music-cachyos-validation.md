@@ -16,6 +16,8 @@ python3 tools/probe-youtube-music.py
 
 同じ CachyOS、ネットワーク、検索語、楽曲フィルター、匿名状態で候補を測る。ビルドとパッケージ取得を先に済ませ、候補を交互に複数回実行する。先頭ページの楽曲数と対象 ID の有無を記録する。Music 検索で観測した同曲のカタログ ID は `NPdgPZ0u3zQ`。ライブラリによってエンドポイント、ロケール、クライアントバージョンが異なる場合がある。その差と失敗を比較結果に含める。
 
+計測コマンドは GNU time（CachyOS の `time` パッケージ）を使う。`rustc --version`、`node --version`、生成した `Cargo.lock` と `package-lock.json` を結果と一緒に残す。
+
 ```sh
 query='Kevin MacLeod Monkeys Spinning Monkeys'
 target='NPdgPZ0u3zQ'
@@ -34,7 +36,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-reqwest = { version = "0.13.3", default-features = false, features = ["rustls"] }
+reqwest = { version = "0.13.3", default-features = false, features = ["http2", "rustls"] }
 tokio = { version = "1", features = ["macros", "rt"] }
 ytmapi-rs = { git = "https://github.com/nick42d/youtui", rev = "d381ea4ce9ec4eb667c7bf8b484bc2db94931c76", default-features = false, features = ["reqwest", "rustls", "simplified-queries"] }
 ```
@@ -52,6 +54,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let http = reqwest::Client::builder()
         .redirect(reqwest::redirect::Policy::none())
         .timeout(Duration::from_secs(8))
+        .http2_max_header_list_size(64 * 1024)
         .build()?;
     let music = YtMusicBuilder::new_with_client(Client::new_from_reqwest_client(http))
         .build()
@@ -73,7 +76,7 @@ cargo build --release --manifest-path "$probe_dir/rust/Cargo.toml"
 
 ### YouTube.js
 
-Node.js 24 と npm を使う。`$probe_dir/js/search.mjs`
+Node.js 24.5 以降と npm を使う。`$probe_dir/js/search.mjs`
 
 ```js
 import { Innertube, YTNodes } from 'youtubei.js';
@@ -104,6 +107,8 @@ console.log(`songs=${songs.length} target_found=${songs.some(row => row.id === t
 ```
 
 このコードはクライアントのセッションをローカルに組み立て、プレーヤースクリプト、アカウントや追加ページの取得を行わない。CPU と最大 RSS は各 CLI プロセス、経過時間は起動を含む。接続エラーも記録し、比較結果を Swiftify 本体や実再生の性能へ外挿しない。 [YouTube.js v18.3.0](https://github.com/LuanRT/YouTube.js/releases/tag/v18.3.0)
+
+クラウドでは、固定リビジョンでの Rust コードのコンパイルと YouTube.js のインストール・読み込みを確認した。両方とも匿名試行は接続段階で止まり、候補間の検索時間と結果件数は未測定。
 
 ## 次回の判定
 
