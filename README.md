@@ -43,6 +43,9 @@ LRC and TTML support word cues, and the lyrics controls save timing corrections
 per track. See [synchronized lyrics](docs/synchronized-lyrics.md) for file
 selection and timing behavior.
 
+Choose Japanese in Settings → Language or use a Japanese system locale. Qt
+uses the system font fallback for Japanese glyphs.
+
 ## Build from source
 
 Use an `integration` checkout. The build needs CMake 3.24+, Ninja, a C++20
@@ -91,9 +94,6 @@ Spotify Premium. The Spotify account screen accepts a Spotify client ID with
 the redirect URI `http://127.0.0.1:8898/login`. See
 [upstream Spotify setup](https://github.com/swiftify-org/swiftify#before-you-start)
 for service-specific instructions.
-
-Choose Japanese in Settings → Language or use a Japanese system locale. Qt
-uses the system font fallback for Japanese glyphs.
 
 ## Playback controls
 
