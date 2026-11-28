@@ -154,3 +154,26 @@ fn media_provider_reopens_without_losing_the_track_on_error() {
     assert_eq!(player.snapshot().state, State::Idle);
     assert_eq!(Arc::strong_count(&provider), 1);
 }
+
+#[test]
+#[ignore = "requires an audio output device"]
+fn output_reopens_at_the_paused_position_with_gain_preserved() {
+    let mut player = Player::open().unwrap();
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/audio/two-tones.opus");
+    player.load_file(path).unwrap();
+    let position = Duration::from_millis(800);
+    player.seek(position).unwrap();
+    player.set_volume(0.35).unwrap();
+    player.set_muted(true);
+    let before = player.snapshot();
+    player.switch_output(None).unwrap();
+    let after = player.snapshot();
+    assert_eq!(after.state, State::Paused);
+    assert_eq!(after.submitted_position, position);
+    assert_ne!(after.timeline_revision, before.timeline_revision);
+    assert_eq!(after.audible_position, None);
+    assert_eq!(player.volume(), 0.35);
+    assert!(player.is_muted());
+    player.play().unwrap();
+    player.stop().unwrap();
+}

@@ -1,0 +1,24 @@
+# Native audio output devices
+
+The standalone engine can enumerate CPAL output handles and open a chosen
+one. `switch_output(None)` opens the current system default again. An active
+track is reopened at the last estimated listening position, or at its
+submitted position when the old backend lacks that estimate. A paused track
+stays paused. Switching invalidates the old clock revision. Explicit mute
+keeps the chosen volume and advances the media clock while emitting silence.
+
+A backend can reject a second open of an exclusive device. For a healthy old
+stream, the player retains its control state if opening the replacement fails
+and resumes it if the new source cannot be prepared after pausing. When the
+old device is disconnected the caller can retry with another output. The
+underlying OS may still buffer old audio. The engine does not yet automatically
+retry a failed device, persist a device choice, or expose these controls in Qt.
+
+The Linux ALSA null-device test covers reopening a paused Opus track,
+position and generation, and volume and mute preservation. Physical
+WASAPI/ALSA/PipeWire device selection and disconnect timing are unverified.
+
+## Codex usage (JST)
+
+- 2026-11-20 19:18. Official App Server returned HTTP 401 during audio output
+  testing. No remaining-usage percentage was available.
