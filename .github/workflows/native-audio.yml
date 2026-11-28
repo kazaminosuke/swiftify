@@ -1,6 +1,8 @@
 name: Native audio engine
 
 on:
+  push:
+    branches: [integration]
   workflow_dispatch:
   pull_request:
     paths:
