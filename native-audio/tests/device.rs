@@ -85,3 +85,72 @@ fn decodes_seeks_and_drains_through_the_audio_device() {
     assert_eq!(stopped.audible_position, None);
     assert_ne!(stopped.timeline_revision, loaded.timeline_revision);
 }
+
+#[test]
+#[ignore = "requires an audio output device"]
+fn media_provider_reopens_without_losing_the_track_on_error() {
+    use std::io::Cursor;
+    use std::sync::{
+        Arc,
+        atomic::{AtomicBool, AtomicUsize, Ordering},
+    };
+    use swiftify_native_audio::media::{MediaInput, MediaProvider};
+
+    struct Provider {
+        deny: AtomicBool,
+        opened: AtomicUsize,
+    }
+    impl MediaProvider for Provider {
+        fn open(&self) -> std::io::Result<MediaInput> {
+            if self.deny.load(Ordering::Relaxed) {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::PermissionDenied,
+                    "provider-private details",
+                ));
+            }
+            self.opened.fetch_add(1, Ordering::Relaxed);
+            let audio = include_bytes!("audio/two-tones.webm");
+            Ok(MediaInput::new(
+                Cursor::new(audio.as_slice()),
+                Some(audio.len() as u64),
+                None,
+            ))
+        }
+    }
+
+    let provider = Arc::new(Provider {
+        deny: AtomicBool::new(false),
+        opened: AtomicUsize::new(0),
+    });
+    let mut player = Player::open().unwrap();
+    player.load_source(provider.clone()).unwrap();
+    let loaded = player.snapshot();
+    provider.deny.store(true, Ordering::Relaxed);
+    assert!(matches!(
+        player.seek(Duration::from_millis(400)),
+        Err(AudioError::Input(std::io::ErrorKind::PermissionDenied))
+    ));
+    assert_eq!(player.snapshot(), loaded);
+    provider.deny.store(false, Ordering::Relaxed);
+    player.seek(Duration::from_millis(800)).unwrap();
+    assert_eq!(provider.opened.load(Ordering::Relaxed), 2);
+    assert_ne!(
+        player.snapshot().timeline_revision,
+        loaded.timeline_revision
+    );
+    player.play().unwrap();
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        let snapshot = player.snapshot();
+        if snapshot.state == State::Ended {
+            assert!(snapshot.submitted_position >= Duration::from_millis(1150));
+            break;
+        }
+        assert_ne!(snapshot.state, State::SourceFailed);
+        assert!(Instant::now() < deadline, "{snapshot:?}");
+        thread::sleep(Duration::from_millis(5));
+    }
+    player.stop().unwrap();
+    assert_eq!(player.snapshot().state, State::Idle);
+    assert_eq!(Arc::strong_count(&provider), 1);
+}

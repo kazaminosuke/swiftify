@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 use std::{
-    fs::{self, File},
     io::{self, BufReader, Read, Seek},
     path::Path,
     time::Duration,
@@ -17,43 +16,56 @@ use symphonia::core::{
 };
 use symphonia_opus::OpusDecoder;
 
+use crate::media::{MediaInput, ReadFailure, open_regular_file};
+
 pub type FileSource = Box<dyn Source + Send>;
 
 /// Opens a regular file for both Qt's existing DSP path and the native engine.
-/// Read the container signature so an Opus stream also works with an `.ogg`
-/// name or without a file extension.
 pub fn open_file(path: &Path) -> Result<FileSource, DecoderError> {
-    if !fs::metadata(path).map_err(file_error)?.is_file() {
-        return Err(DecoderError::IoError("expected a regular file".to_owned()));
-    }
-    let mut file = File::open(path).map_err(file_error)?;
-    let metadata = file.metadata().map_err(file_error)?;
-    let mut signature = [0; 4];
-    if file.read_exact(&mut signature).is_ok() {
-        file.rewind().map_err(file_error)?;
-        if signature == [0x1a, 0x45, 0xdf, 0xa3] || &signature == b"OggS" {
-            let stream = MediaSourceStream::new(
-                Box::new(file.try_clone().map_err(file_error)?),
-                Default::default(),
-            );
-            match OpusSource::open(stream) {
-                Ok(Some(source)) => return Ok(Box::new(source)),
-                Err(error) if signature != *b"OggS" => {
-                    return Err(DecoderError::IoError(error.to_string()));
-                }
-                _ => file.rewind().map_err(file_error)?,
-            }
+    open_media(open_regular_file(path).map_err(file_error)?)
+}
+
+pub fn open_media(mut input: MediaInput) -> Result<FileSource, DecoderError> {
+    // The first Ogg packet begins after the complete lacing table. Read only
+    // enough of the stream to recognize an Opus identification packet.
+    const OGG_HEADER: usize = 27;
+    let mut header = [0; OGG_HEADER + 255 + 8];
+    let mut read = 0;
+    while read < header.len() {
+        let count = match input.read(&mut header[read..]) {
+            Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
+            result => result.map_err(file_error)?,
+        };
+        if count == 0 {
+            break;
         }
-    } else {
-        file.rewind().map_err(file_error)?;
+        read += count;
+    }
+    input.rewind().map_err(file_error)?;
+    let header = &header[..read];
+    let ogg_opus = header.starts_with(b"OggS")
+        && header.get(26).is_some_and(|segments| {
+            let start = OGG_HEADER + usize::from(*segments);
+            header.get(start..start + 8) == Some(b"OpusHead")
+        });
+    if header.starts_with(&[0x1a, 0x45, 0xdf, 0xa3]) || ogg_opus {
+        let failure = input.failure.clone();
+        let stream = MediaSourceStream::new(Box::new(input), Default::default());
+        return OpusSource::open(stream, failure)
+            .map(|source| Box::new(source) as FileSource)
+            .map_err(|error| DecoderError::IoError(error.to_string()));
     }
 
+    let length = input.byte_len;
+    let extension = input.extension.take();
     let mut builder = Decoder::builder()
-        .with_data(BufReader::new(file))
-        .with_seekable(true)
-        .with_byte_len(metadata.len());
-    if let Some(extension) = path.extension().and_then(|extension| extension.to_str()) {
-        builder = builder.with_hint(extension);
+        .with_data(BufReader::new(input))
+        .with_seekable(true);
+    if let Some(length) = length {
+        builder = builder.with_byte_len(length);
+    }
+    if let Some(extension) = extension {
+        builder = builder.with_hint(&extension);
     }
     Ok(Box::new(builder.build()?))
 }
@@ -74,10 +86,11 @@ struct OpusSource {
     cursor: usize,
     target_ns: i128,
     ended: bool,
+    failure: ReadFailure,
 }
 
 impl OpusSource {
-    fn open(stream: MediaSourceStream<'static>) -> Result<Option<Self>, Error> {
+    fn open(stream: MediaSourceStream<'static>, failure: ReadFailure) -> Result<Self, Error> {
         let format = symphonia::default::get_probe().probe(
             &Hint::new(),
             stream,
@@ -93,7 +106,7 @@ impl OpusSource {
             .and_then(|params| params.audio())
             .ok_or(Error::Unsupported("audio parameters unavailable"))?;
         if params.codec != CODEC_ID_OPUS {
-            return Ok(None);
+            return Err(Error::Unsupported("the container has no Opus track"));
         }
         let time_base = track
             .time_base
@@ -133,12 +146,13 @@ impl OpusSource {
             cursor: 0,
             target_ns: 0,
             ended: false,
+            failure,
         };
         source.fill()?;
         if source.ended {
             return Err(Error::DecodeError("empty Opus track"));
         }
-        Ok(Some(source))
+        Ok(source)
     }
 
     fn frames(&self, nanos: i128) -> usize {
@@ -191,7 +205,12 @@ impl Iterator for OpusSource {
     type Item = f32;
 
     fn next(&mut self) -> Option<Self::Item> {
-        if self.fill().is_err() {
+        if let Err(error) = self.fill() {
+            let kind = match error {
+                Error::IoError(error) => error.kind(),
+                _ => io::ErrorKind::InvalidData,
+            };
+            self.failure.record(kind);
             self.ended = true;
             return None;
         }
