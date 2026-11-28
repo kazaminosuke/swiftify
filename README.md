@@ -92,6 +92,9 @@ the redirect URI `http://127.0.0.1:8898/login`. See
 [upstream Spotify setup](https://github.com/swiftify-org/swiftify#before-you-start)
 for service-specific instructions.
 
+Choose Japanese in Settings → Language or use a Japanese system locale. Qt
+uses the system font fallback for Japanese glyphs.
+
 ## Playback controls
 
 An existing Swiftify process handles these commands from a second invocation.
