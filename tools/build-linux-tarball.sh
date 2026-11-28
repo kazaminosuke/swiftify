@@ -20,7 +20,7 @@
 #
 # usage
 #   ./tools/build-linux-tarball.sh --qt ~/Qt/6.12.1/gcc_64
-#   ./tools/build-linux-tarball.sh --qt ~/Qt/6.12.1/gcc_64 --out dist --jobs 8
+#   ./tools/build-linux-tarball.sh --qt ~/Qt/6.12.1/gcc_64 --out dist --without-spotify --test
 #
 # needs cmake, ninja, git, curl, a c++20 compiler (CC and CXX are used when
 # set), rust from rustup, and the dev packages for libpulse, alsa, openssl and
@@ -32,7 +32,7 @@ set -euo pipefail
 QT=""
 OUT="dist"
 JOBS="$(nproc 2>/dev/null || echo 4)"
-TEST_YOUTUBE=OFF
+TEST_MODE=none
 SPOTIFY=ON
 
 while [[ $# -gt 0 ]]; do
@@ -40,7 +40,8 @@ while [[ $# -gt 0 ]]; do
         --qt) QT="$2"; shift 2 ;;
         --out) OUT="$2"; shift 2 ;;
         --jobs) JOBS="$2"; shift 2 ;;
-        --test-youtube) TEST_YOUTUBE=ON; shift ;;
+        --test-youtube) TEST_MODE=youtube; shift ;;
+        --test) TEST_MODE=all; shift ;;
         --without-spotify) SPOTIFY=OFF; shift ;;
         -h|--help)
             sed -n '2,12p' "$0" | sed 's/^# \{0,1\}//'
@@ -124,14 +125,25 @@ build_dependency qcoro https://github.com/qcoro/qcoro.git 98f23d8d8d67e9e24217d2
     -DUSE_QT_VERSION=6 -DQCORO_WITH_QTDBUS=OFF -DQCORO_WITH_QTWEBSOCKETS=OFF -DQCORO_WITH_QTQUICK=OFF \
     -DQCORO_WITH_QML=OFF -DQCORO_WITH_QTTEST=OFF -DQCORO_BUILD_EXAMPLES=OFF -DBUILD_TESTING=OFF
 
+testing=OFF
+if [[ "$TEST_MODE" != none ]]; then testing=ON; fi
 cmake -S "$SOURCE" -B "$WORK/swiftify" "${common[@]}" -DCMAKE_INSTALL_PREFIX=/usr \
-    -DSWIFTIFY_BUNDLED_QT=ON -DENABLE_SPOTIFY="$SPOTIFY" -DBUILD_TESTING="$TEST_YOUTUBE"
-cmake --build "$WORK/swiftify" --target swiftify --parallel "$JOBS"
-if [[ "$TEST_YOUTUBE" == ON ]]; then
-    cmake --build "$WORK/swiftify" --target tst_youtubeapi tst_googleauthorization tst_youtubeview tst_local tst_playback tst_discord --parallel "$JOBS"
-    ctest --test-dir "$WORK/swiftify" --output-on-failure --no-tests=error \
-        -R 'tst_(youtubeapi|googleauthorization|youtubeview|local|playback|discord)|translations_catalog|qml_statements|icon_names'
-fi
+    -DSWIFTIFY_BUNDLED_QT=ON -DENABLE_SPOTIFY="$SPOTIFY" -DBUILD_TESTING="$testing"
+case "$TEST_MODE" in
+    all)
+        cmake --build "$WORK/swiftify" --parallel "$JOBS"
+        LIBGL_ALWAYS_SOFTWARE=1 xvfb-run -a ctest --test-dir "$WORK/swiftify" --output-on-failure --no-tests=error
+        ;;
+    youtube)
+        cmake --build "$WORK/swiftify" --target swiftify tst_youtubeapi tst_googleauthorization tst_youtubeview \
+            tst_local tst_playback tst_discord --parallel "$JOBS"
+        ctest --test-dir "$WORK/swiftify" --output-on-failure --no-tests=error \
+            -R 'tst_(youtubeapi|googleauthorization|youtubeview|local|playback|discord)|translations_catalog|qml_statements|icon_names'
+        ;;
+    none)
+        cmake --build "$WORK/swiftify" --target swiftify --parallel "$JOBS"
+        ;;
+esac
 rm -rf "${APPDIR:?}"
 DESTDIR="$APPDIR" cmake --install "$WORK/swiftify"
 
@@ -193,19 +205,47 @@ for pattern in "${system_libraries[@]}"; do
     find "$APPDIR/usr/lib" -maxdepth 1 -name "$pattern" -delete
 done
 
-rm -rf "${WORK:?}/${NAME:?}"
-cp -a "$APPDIR/usr" "$WORK/$NAME"
+PACKAGE="$WORK/$NAME"
+rm -rf "${PACKAGE:?}"
+cp -a "$APPDIR/usr" "$PACKAGE"
 
-# everything in it has to find its libraries in the tarball or the system,
-# with none of the build's own paths
-missing=""
+provenance="$PACKAGE/share/licenses/swiftify/build-provenance.txt"
+if [[ "$SPOTIFY" == OFF ]]; then
+    unexpected="$(find "$PACKAGE" \( -iname '*qt6websockets*' -o -iname '*qt*keychain*' \) -print)"
+    [[ -z "$unexpected" ]] || fail "Spotify-only files in the local package"$'\n'"$unexpected"
+    if grep -Eq '^(librespot([ -]|$)|spotify[_-]oauth[ ])' "$provenance"; then
+        fail "Spotify-only crates in the local build provenance"
+    fi
+fi
+
+# Resolve each ELF object independently, including plugins loaded at runtime.
+# Record the host libraries that are still required after bundling.
+elf_dependencies="$WORK/elf-dependencies.txt"
+: > "$elf_dependencies"
 while IFS= read -r -d '' file; do
     if file "$file" | grep -q ELF; then
-        unresolved="$(env -u LD_LIBRARY_PATH ldd "$file" 2>/dev/null | grep "not found" || true)"
-        [[ -z "$unresolved" ]] || missing+="${file#"$WORK/"}"$'\n'"$unresolved"$'\n'
+        resolved="$(env -u LD_LIBRARY_PATH ldd "$file" 2>&1)" ||
+            fail "${file#"$PACKAGE/"}: $resolved"
+        [[ "$resolved" != *"not found"* ]] || fail "${file#"$PACKAGE/"}: $resolved"
+        awk -v bundle="$PACKAGE/" '
+            $2 == "=>" && $3 ~ /^\// {
+                source = index($3, bundle) == 1 ? "bundled" : "host"
+                print source "\t" $1
+            }
+        ' <<< "$resolved" >> "$elf_dependencies"
     fi
-done < <(find "$WORK/$NAME" -type f \( -path '*/bin/*' -o -name '*.so*' \) -print0)
-[[ -z "$missing" ]] || fail "libraries missing from the tarball"$'\n'"$missing"
+done < <(find "$PACKAGE" -type f \( -path '*/bin/*' -o -name '*.so*' \) -print0)
+
+manifest="$PACKAGE/share/licenses/swiftify/runtime-dependencies.txt"
+{
+    if [[ -e "$SOURCE/.git" ]]; then
+        printf 'Source commit %s\n' "$(git -C "$SOURCE" rev-parse HEAD)"
+    fi
+    cat "$provenance"
+    printf '\nELF dependencies (bundled or provided by the host)\n'
+    LC_ALL=C sort -u "$elf_dependencies"
+} > "$manifest"
+cp "$manifest" "$OUT/$NAME.dependencies.txt"
 tar -C "$WORK" -czf "$OUT/$NAME.tar.gz" "$NAME"
 sha256sum "$OUT/$NAME.tar.gz" | sed "s|  $OUT/|  |" > "$OUT/$NAME.tar.gz.sha256"
 echo "built $OUT/$NAME.tar.gz"

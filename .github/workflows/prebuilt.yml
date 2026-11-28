@@ -6,6 +6,7 @@ name: prebuilt
 
 on:
   push:
+    branches: [integration]
     tags: ['v*']
   workflow_dispatch:
     inputs:
@@ -37,6 +38,7 @@ permissions:
 
 jobs:
   windows:
+    if: github.ref != 'refs/heads/integration'
     # windows-2025 and windows-latest come with visual studio 2026, which
     # build-windows.ps1 does not take
     runs-on: windows-2022
@@ -129,6 +131,7 @@ jobs:
     strategy:
       matrix:
         spotify: [enabled, disabled]
+      fail-fast: false
     # the oldest supported runner, so the tarball runs on older distros too
     runs-on: ubuntu-22.04
     steps:
@@ -162,7 +165,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            g++-12 clang-18 ninja-build pkg-config \
+            g++-12 clang-18 ninja-build pkg-config xvfb xauth \
             libpulse-dev libasound2-dev libssl-dev libsecret-1-dev \
             libgl1-mesa-dev libegl1-mesa-dev libxkbcommon-dev libxkbcommon-x11-0 \
             libfontconfig1-dev libfreetype-dev libdbus-1-dev \
@@ -174,8 +177,8 @@ jobs:
         with:
           version: 6.12.1
           arch: linux_gcc_64
-          # soloist talks to spotify's soloist over websockets
-          modules: qtshadertools qtwebsockets qtnetworkauth qttasktree
+          # Soloist uses WebSockets, which the local-only build does not need.
+          modules: qtshadertools qtnetworkauth qttasktree ${{ matrix.spotify == 'enabled' && 'qtwebsockets' || '' }}
           cache: true
 
       # clang held to gcc 12's standard library, so it still runs on older
@@ -190,7 +193,24 @@ jobs:
         run: |
           flags=()
           if [[ "${{ matrix.spotify }}" == disabled ]]; then flags+=(--without-spotify); fi
-          ./tools/build-linux-tarball.sh --qt "$QT_ROOT_DIR" --out dist --test-youtube "${flags[@]}"
+          ./tools/build-linux-tarball.sh --qt "$QT_ROOT_DIR" --out dist --test "${flags[@]}"
+
+      - name: Start the extracted package with a fresh profile
+        run: |
+          trial="$(mktemp -d)"
+          archive=(dist/*.tar.gz)
+          (cd dist && sha256sum -c -- *.tar.gz.sha256)
+          tar -xzf "${archive[0]}" -C "$trial"
+          mkdir -m 700 "$trial/runtime"
+          apps=("$trial"/swiftify-*/bin/swiftify)
+          status=0
+          env -u LD_LIBRARY_PATH -u QT_PLUGIN_PATH -u QML_IMPORT_PATH -u QML2_IMPORT_PATH \
+            XDG_CONFIG_HOME="$trial/config" XDG_DATA_HOME="$trial/data" XDG_CACHE_HOME="$trial/cache" \
+            XDG_STATE_HOME="$trial/state" XDG_RUNTIME_DIR="$trial/runtime" \
+            LIBGL_ALWAYS_SOFTWARE=1 QT_QPA_PLATFORM=xcb xvfb-run -a dbus-run-session -- \
+            timeout --kill-after=3s 10s "${apps[0]}" --disable-spotify > "$trial/startup.log" 2>&1 || status=$?
+          cat "$trial/startup.log"
+          test "$status" -eq 124
 
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
@@ -198,10 +218,11 @@ jobs:
           path: |
             dist/*.tar.gz
             dist/*.sha256
+            dist/*.dependencies.txt
           if-no-files-found: error
 
   macos:
-    if: github.event_name != 'pull_request'
+    if: github.event_name != 'pull_request' && github.ref != 'refs/heads/integration'
     # apple silicon with xcode 27. the icon uses icon composer features xcode
     # 26's actool can't open. the image is still a preview
     runs-on: xcode-27
@@ -237,7 +258,7 @@ jobs:
           if-no-files-found: error
 
   release:
-    if: github.ref_type == 'tag' || inputs.create_release == true
+    if: github.ref_type == 'tag' || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.create_release == true)
     needs: [windows, linux, macos]
     runs-on: ubuntu-24.04
     permissions:
