@@ -390,7 +390,7 @@ Item {
                     objectName: "languageSelection"
                     currentIndex: languages.indexOf(Settings.language)
                     stackWhenNarrow: true
-                    segmentPadding: 6
+                    segmentPadding: width < 330 ? 2 : 6
                     segments: [
                         Segment { text: qsTr("System") },
                         Segment { text: "English" },

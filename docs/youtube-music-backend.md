@@ -55,6 +55,8 @@ Music の作品ページに接続できず、暦日ベースのクライアン�
 
 GitHub Actions の匿名診断は、作品ページが返すクライアント設定を使い、サービスから直接再生可能な音声 URL が返れば最初の byte range を検証する。ローカルではリポジトリのルートで `python3 tools/probe-youtube-music.py` を実行できる。この診断はメディア入力の取得までをカバーし、既存エンジンでのデコードや出力はその次の検証になる。 [診断スクリプト](../tools/probe-youtube-music.py) · [GitHub Actions の定義](../.github/workflows/youtube-music-probe.yml)
 
+GitHub-hosted Ubuntu 24.04 の初回試験は、作品ページで HTTP 200、174 ms、2,012 B を観測した。応答に有効な `WEB_REMIX` 初期設定が見つからず、プレーヤーと CDN への通信には進まなかった。 [診断結果](https://github.com/kazaminosuke/swiftify/actions/runs/46143146247)
+
 サービスから音声データが到達しなかったため、ネイティブ再生は未実証で、シークや同期の性能値もない。次の検証は通常の HTTPS 接続が可能な環境で、同じ Music セッションが許可したフォーマットで部分取得とデコードを確認する。明示的な拒否に遭遇した時点でそのリクエスト経路を止める。
 
 ## 既存エンジンへの接続と測定

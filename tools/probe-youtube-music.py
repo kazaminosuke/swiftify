@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Check one anonymous YouTube Music playback response and direct audio range."""
 
+import html
 import http.client
 import http.cookiejar
 import json
@@ -67,7 +68,7 @@ def fetch(opener, url, stage, size_limit, *, headers=None, data=None, status=200
 def extract_config(page):
     config = {}
     decoder = json.JSONDecoder()
-    for entry in re.finditer(r"\bytcfg\.set\(\s*(?=\{)", page):
+    for entry in re.finditer(r"\bytcfg\.set\s*\(\s*(?=\{)", page):
         try:
             values, end = decoder.raw_decode(page, entry.end())
         except ValueError:
@@ -81,8 +82,52 @@ def extract_config(page):
     if client.get("clientName") != "WEB_REMIX" or not isinstance(version, str) or not re.fullmatch(
         r"[0-9.]{4,32}", version
     ):
-        raise ProbeError("YouTube Music bootstrap did not provide a valid WEB_REMIX client version")
+        return None
     return config, client
+
+
+def bootstrap_blocker(page):
+    blocked_pages = (
+        ("a consent interstitial", (
+            "before you continue to youtube", "consent.youtube.com", "consent.google.com",
+        )),
+        ("an admission challenge", (
+            "our systems have detected unusual traffic", "g-recaptcha",
+            "confirm you’re not a bot", "confirm you're not a bot",
+        )),
+        ("a sign-in requirement", ("sign in to continue to youtube music", "gaia_loginform")),
+        ("a regional limitation", (
+            "youtube music is not available in your area", "youtube music isn't available in your country",
+        )),
+        ("an unsupported-browser message", (
+            "browser is not supported", "unsupported browser", "please update your browser",
+        )),
+    )
+    for reason, markers in blocked_pages:
+        if any(marker in page for marker in markers):
+            return reason
+    if re.search(r'<meta\s+[^>]*http-equiv\s*=\s*["\']?refresh\b', page):
+        return "a client-side redirection page"
+    return None
+
+
+def load_guest_config(guest):
+    headers = {"Accept": "text/html", "Accept-Language": "en-US,en;q=0.9"}
+    entries = ((WATCH_URL, "Music watch bootstrap"), (f"{MUSIC_ORIGIN}/", "Music homepage bootstrap"))
+    for url, stage in entries:
+        body, response_headers = fetch(guest, url, stage, 4 * 1024 * 1024, headers=headers)
+        if response_headers.get_content_type() != "text/html":
+            raise ProbeError(f"{stage} did not return HTML")
+        page = body.decode("utf-8", errors="replace")
+        if guest_config := extract_config(page):
+            return guest_config
+        lower_page = page.casefold()
+        if blocker := bootstrap_blocker(html.unescape(lower_page)):
+            raise ProbeError(f"{stage} indicated {blocker}")
+        if url == WATCH_URL and re.search(r"<ytmusic-app(?:\s|>)", lower_page):
+            print("Music watch page returned an application shell without guest configuration. Checking its homepage once.")
+            continue
+        raise ProbeError(f"{stage} returned an unrecognized HTML page without a valid WEB_REMIX client version")
 
 
 def is_https_host(parsed, hostname):
@@ -212,8 +257,7 @@ def main():
         # Only the first-party Music session receives cookies set during this run.
         guest = urllib.request.build_opener(NoRedirect(), urllib.request.HTTPCookieProcessor(http.cookiejar.CookieJar()))
         anonymous = urllib.request.build_opener(NoRedirect())
-        page, _ = fetch(guest, WATCH_URL, "Music guest bootstrap", 4 * 1024 * 1024)
-        config, client = extract_config(page.decode("utf-8", errors="replace"))
+        config, client = load_guest_config(guest)
         stamp = player_timestamp(config, anonymous)
         availability = "available" if stamp is not None else "unavailable"
         print(f"Music guest uses WEB_REMIX {client['clientVersion']}, public player release metadata {availability}.")

@@ -33,6 +33,9 @@ sha256sum -c "$package.tar.gz.sha256" &&
 Wayland セッション内の Swiftify を検出します。アプリの設定、試用中に作成したプレイリスト、キャッシュは上の `profile` に保存されます。
 Wayland と PipeWire には現在のセッションを使います。
 
+日本語を表示するには、設定の表示言語から日本語を選びます。日本語フォントが
+入っていない場合は、CachyOS の `noto-fonts-cjk` を使用できます。
+
 音が出ないときは `wpctl status` で PipeWire の既定出力を確認します。
 CachyOS での通常の音声経路は `pipewire-alsa`、`pipewire-pulse` と
 WirePlumber です。ローダーのエラーは `ldd "$trial/$package/bin/swiftify"`、
