@@ -235,6 +235,9 @@ while IFS= read -r -d '' file; do
         ' <<< "$resolved" >> "$elf_dependencies"
     fi
 done < <(find "$PACKAGE" -type f \( -path '*/bin/*' -o -name '*.so*' \) -print0)
+if grep -q $'^host\tlibQt6' "$elf_dependencies"; then
+    fail "packaged binaries resolve Qt libraries outside the archive"
+fi
 
 manifest="$PACKAGE/share/licenses/swiftify/runtime-dependencies.txt"
 {

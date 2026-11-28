@@ -138,7 +138,7 @@ pub fn write_tags(path: &Path, edits: &TagEdits, artwork: Option<&[u8]>) -> Resu
         file.insert_tag(tag);
     }
 
-    let mut write = || -> Result<(), Box<dyn std::error::Error>> {
+    let write = |mut source: fs::File| -> Result<(), Box<dyn std::error::Error>> {
         let directory = real_path.parent().unwrap_or(Path::new("."));
         let mut partial = tempfile::Builder::new()
             .prefix(".swiftify-tags-")
@@ -153,10 +153,13 @@ pub fn write_tags(path: &Path, edits: &TagEdits, artwork: Option<&[u8]>) -> Resu
         }
         partial.as_file().set_permissions(before.permissions())?;
         partial.as_file().sync_all()?;
+        // Windows requires the destination handle to be closed before replacement.
+        #[cfg(windows)]
+        drop(source);
         partial.persist(&real_path)?;
         Ok(())
     };
-    write().map_err(|error| format!("could not write the tags of {}: {error}", path.display()))
+    write(source).map_err(|error| format!("could not write the tags of {}: {error}", path.display()))
 }
 
 fn same_file(before: &fs::Metadata, after: &fs::Metadata) -> bool {

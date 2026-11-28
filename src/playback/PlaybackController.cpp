@@ -27,6 +27,7 @@
 #include <QCoreApplication>
 #include <QCryptographicHash>
 #include <QLoggingCategory>
+#include <QPointer>
 #include <QQmlEngine>
 #include <QRandomGenerator>
 #include <QSaveFile>
@@ -723,6 +724,7 @@ void PlaybackController::startPlayback(const Song &song, bool recordHistory, boo
 QCoro::Task<> PlaybackController::runStartPlayback(Song song, CancelToken token, bool fromSearch, bool steppingBack,
                                                     quint32 crossfadeDurationMs, quint32 initialPositionMs)
 {
+    const QPointer<PlaybackController> owner(this);
     QString failure;
     bool unavailable = false;
     bool cancelled = false;
@@ -821,6 +823,8 @@ QCoro::Task<> PlaybackController::runStartPlayback(Song song, CancelToken token,
         unavailable = error.kind() == SpotifyError::Kind::Unavailable;
     }
 
+    // A core completion can arrive after this controller has shut down.
+    if (!owner) co_return;
     const bool withdrawn = cancelled || isCancelled(token) || !isCurrent(song);
     if (withdrawn) {
         // the core started the song anyway, because nobody told it the request
@@ -903,9 +907,10 @@ void PlaybackController::resume()
 QCoro::Task<> PlaybackController::runResume(CancelToken token)
 {
     if (m_audioOutputNeedsRestart || m_core->audioOutputStalled()) {
+        const QPointer<PlaybackController> owner(this);
         m_audioOutputNeedsRestart = true;
         co_await restartAudioOutput(token);
-        m_playbackRequest.finish(token);
+        if (owner) m_playbackRequest.finish(token);
         co_return;
     }
     try {
@@ -973,6 +978,7 @@ QCoro::Task<> PlaybackController::restartAudioOutput(CancelToken token)
         m_audioOutputNeedsRestart = false;
         co_return;
     }
+    const QPointer<PlaybackController> owner(this);
     const Song song = *m_currentSong;
     const quint32 position = m_livePositionMs;
     QString failure;
@@ -1008,12 +1014,13 @@ QCoro::Task<> PlaybackController::restartAudioOutput(CancelToken token)
         syncMediaSession();
         co_return;
     } catch (const Cancelled &) {
-        silenceWithdrawnPlayback();
+        if (owner) silenceWithdrawnPlayback();
         co_return;
     } catch (const SpotifyError &error) {
         failure = error.message();
     }
 
+    if (!owner) co_return;
     if (isCancelled(token)) {
         silenceWithdrawnPlayback();
         co_return;
