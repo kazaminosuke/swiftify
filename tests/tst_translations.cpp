@@ -239,6 +239,9 @@ private slots:
         QCOMPARE(settings.language(), QStringLiteral("ja"));
         Translations translations(&settings);
         QCOMPARE(QCoreApplication::translate("test", "Settings"), QStringLiteral("設定"));
+        QCOMPARE(QCoreApplication::translate("LyricsProvider", "TTML file"), QStringLiteral("TTML ファイル"));
+        QCOMPARE(QCoreApplication::translate("Errors", "could not write the tags of /tmp/music.flac: Connection refused"),
+                 QStringLiteral("/tmp/music.flac のタグを書き込めませんでした：接続が拒否されました"));
     }
 
     void disabledLanguageFallsBackToEnglishAndShowsError()

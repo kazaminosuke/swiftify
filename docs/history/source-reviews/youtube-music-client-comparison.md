@@ -1,9 +1,11 @@
 # Native YouTube Music clients compared
 
+> Historical source review. [Current product requirements](../../../AGENTS.md)
+
 The sources below were checked out at the listed revisions on 2026-11-20.
 This is a static source comparison. No provider request, browser login, or
 third-party executable was run during the comparison. Swiftify's native
-audio test results are in [Native playback](native-playback.md).
+audio test documentation is in [Native playback](../../native-playback.md).
 
 | Project | Reviewed revision | Project source license |
 | --- | --- | --- |

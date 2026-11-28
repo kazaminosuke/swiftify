@@ -16,15 +16,9 @@ in its iterator. The same transport-error observer still applies to its reader.
 
 The current contract accepts seekable media. Opening and seeks can block on
 the control thread. A network adapter must time-bound each blocking operation,
-validate range and content identity before resuming, and enforce its own
-permissions and authentication rules. HTTP transport, live streams, catalogue
-binding and Qt integration of the CPAL clock remain future work. No YouTube
-Music requests or login are made by this layer.
-
-## Codex usage (JST)
-
-- 2026-11-20 19:14. Official App Server returned HTTP 401 after catalogue and
-  provider implementation. No remaining-usage percentage was available.
+validate range and content identity before resuming, and enforce its permissions and
+authentication rules. The standalone contract is exercised by native-audio
+tests. The production Qt routes are described in [Native playback](native-playback.md).
 
 ## Cancellation and seek failures
 

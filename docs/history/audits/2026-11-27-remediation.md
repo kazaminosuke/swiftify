@@ -1,8 +1,11 @@
 # Swiftify 実機導入前の修正台帳
 
+> 2026年11月27日時点の歴史的記録です。[現行の開発方針](../../../AGENTS.md)
+
 2026年11月27日（JST）。監査基準の上流と Fork の `main` はともに
 `51dd3efda762fd739d68e872eb01754bb8c4e67d`。元の指摘と既存の Linux
-検証結果は Draft #16 にある。[監査報告](https://github.com/kazaminosuke/swiftify/blob/62683fa4e37c52ad78f0bffd6c22f35f5709423c/docs/review/2026-11-27.md) · [初回検証](https://github.com/kazaminosuke/swiftify/blob/62683fa4e37c52ad78f0bffd6c22f35f5709423c/docs/review/2026-11-27-verification.md)
+検証結果は同日の資料を参照。[監査報告](2026-11-27.md) ·
+[初回検証](2026-11-27-verification.md)
 
 ## 監査の指摘
 
@@ -38,7 +41,7 @@
 | Spotify の選択 | 修正済み | 通常起動はローカル GUI。`--enable-spotify` か `SWIFTIFY_ENABLE_SPOTIFY=1` を指定したプロセスで復元と Soloist を有効にする。`--disable-spotify` が優先。ビルド無効構成の Cargo グラフから librespot、Spotify OAuth、RSA が外れる。 |
 | Google の資格情報と割当 | 修正済み | 公開データは API キー、本人データは読み取り専用 OAuth。401 ではセッションを無効化し、権限 403 は対象資格情報の通信を停止。割当と 429 は両経路を休止し、Retry-After と手動再試行を尊重する。 |
 | Google の更新と失効 | 修正済み | オンラインアクセスが既定。オフラインアクセスは明示指定で、強制同意を送らない。期限切れ後の本人操作で更新し、切断時に通信とローカル状態を止めて Google の失効結果を表示する。 |
-| Google プロジェクト | 外部設定待ち | Desktop OAuth クライアントの公開状態、スコープ審査、テストユーザー、API キー制限と有効な割当をプロジェクト管理者が確認する。[設定手順](../youtube-catalogue.md) |
+| Google プロジェクト | 外部設定待ち | Desktop OAuth クライアントの公開状態、スコープ審査、テストユーザー、API キー制限と有効な割当をプロジェクト管理者が確認する。 |
 | タグ編集 | 修正済み | 同一ディレクトリに排他的に一時ファイルを作り、開いた記述子で更新。元ファイルの状態を照合し、完了時にアトミックに置換。 |
 | プレイリストとカバー | 修正済み | 格納名、絶対パス、正規化と格納先を検証し、シンボリックリンクをまたぐ管理ファイル操作を拒否。古いローカルプレイリストの移行を維持。 |
 | ローカルスキャン | 修正済み | リンクをたどる走査を抑止し、項目数、曲数、メタデータ量、処理時間を制限。終了時のキャンセルを追加。OS とストレージの同期操作は個別の締切で強制停止できない場合がある。 |
@@ -81,11 +84,11 @@ Debian 13 x86_64、Qt 6.12.1、GCC 14.2、Rust 1.100.0 で Debug ビルドを確
 
 ## Draft の依存と実機条件
 
-上流追従のために、[統合 #17](https://github.com/kazaminosuke/swiftify/pull/17)
-を [Google #18](https://github.com/kazaminosuke/swiftify/pull/18)、
-[Spotify #19](https://github.com/kazaminosuke/swiftify/pull/19)、
-[本体の境界 #20](https://github.com/kazaminosuke/swiftify/pull/20)、
-[依存関係と確認結果 #21](https://github.com/kazaminosuke/swiftify/pull/21) の基準にした。
+上流追従のために、統合 #17
+を Google #18、
+Spotify #19、
+本体の境界 #20、
+依存関係と確認結果 #21 の基準にした。
 #17 は既存 #8、#13、#14 とその前提をまとめた検証用の差分。元の Draft はそれぞれ
 既存の base と head を維持する。
 

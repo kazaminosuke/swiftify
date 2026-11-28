@@ -107,7 +107,7 @@ StyledDialog {
     FileDialog {
         id: picker
         title: qsTr("Choose Cover Art")
-        nameFilters: ["Images (*.png *.jpg *.jpeg *.webp *.gif *.bmp *.tif *.tiff *.avif *.heic)"]
+        nameFilters: [qsTr("Images (*.png *.jpg *.jpeg *.webp *.gif *.bmp *.tif *.tiff *.avif *.heic)")]
         onAccepted: {
             maker.photo = selectedFile
             if (maker.photoValid) {
@@ -204,7 +204,7 @@ StyledDialog {
     StyledText {
         width: parent.width
         Reveal.shown: root.problem.length > 0
-        text: root.problem
+        text: qsTranslate("Errors", root.problem)
         wrapMode: Text.Wrap
         font.pixelSize: Appearance.fontSize.smaller
         color: Appearance.colors.error
