@@ -33,108 +33,13 @@ use std::{
     thread,
 };
 
-use rodio::{
-    Source,
-    cpal::{
-        self,
-        traits::{DeviceTrait, HostTrait, StreamTrait},
-    },
-};
+use rodio::{Source, cpal::traits::StreamTrait};
 
-/// a stream on the default device, stopped until it is played, that plays the
-/// interleaved stereo `fill` writes. a device not of two channels or not of
-/// floats gets the same stereo, mixed down or padded, in its own format.
-pub(crate) fn open_stereo_stream<F>(fill: F) -> Option<(cpal::Stream, u32)>
+pub(crate) fn open_stereo_stream<F>(mut fill: F) -> Option<(rodio::cpal::Stream, u32)>
 where
     F: FnMut(&mut [f32]) + Clone + Send + 'static,
 {
-    let device = cpal::default_host().default_output_device()?;
-    let supported = device.default_output_config().ok()?;
-    let config: cpal::StreamConfig = supported.config();
-    let rate = config.sample_rate.0;
-    // a thousand frames a callback rather than the device's usual 512: the
-    // system's work for each callback is most of what the stream costs, and
-    // at about 21 ms it is still no longer than an analysis hop, so the
-    // visualizers are fed as evenly as before. a device that will not take
-    // that is opened as it comes
-    let larger = match *supported.buffer_size() {
-        cpal::SupportedBufferSize::Range { min, max } => Some(cpal::StreamConfig {
-            buffer_size: cpal::BufferSize::Fixed(1_024_u32.clamp(min, max)),
-            ..config.clone()
-        }),
-        cpal::SupportedBufferSize::Unknown => None,
-    };
-    let stream = larger
-        .and_then(|larger| {
-            build_stereo_stream(&device, supported.sample_format(), &larger, fill.clone())
-        })
-        .or_else(|| build_stereo_stream(&device, supported.sample_format(), &config, fill))?;
-    stream.pause().ok()?;
-    Some((stream, rate))
-}
-
-fn build_stereo_stream<F>(
-    device: &cpal::Device,
-    format: cpal::SampleFormat,
-    config: &cpal::StreamConfig,
-    fill: F,
-) -> Option<cpal::Stream>
-where
-    F: FnMut(&mut [f32]) + Send + 'static,
-{
-    match (format, config.channels) {
-        (cpal::SampleFormat::F32, 2) => {
-            let mut fill = fill;
-            device
-                .build_output_stream::<f32, _, _>(config, move |data, _| fill(data), |_| {}, None)
-                .ok()
-        }
-        (cpal::SampleFormat::F32, _) => mapped_stream::<f32, F>(device, config, fill),
-        (cpal::SampleFormat::I16, _) => mapped_stream::<i16, F>(device, config, fill),
-        (cpal::SampleFormat::I32, _) => mapped_stream::<i32, F>(device, config, fill),
-        (cpal::SampleFormat::U16, _) => mapped_stream::<u16, F>(device, config, fill),
-        (cpal::SampleFormat::F64, _) => mapped_stream::<f64, F>(device, config, fill),
-        _ => None,
-    }
-}
-
-fn mapped_stream<T, F>(
-    device: &cpal::Device,
-    config: &cpal::StreamConfig,
-    mut fill: F,
-) -> Option<cpal::Stream>
-where
-    T: cpal::SizedSample + cpal::FromSample<f32>,
-    F: FnMut(&mut [f32]) + Send + 'static,
-{
-    let channels = usize::from(config.channels);
-    let mut stereo = Vec::new();
-    device
-        .build_output_stream::<T, _, _>(
-            config,
-            move |data: &mut [T], _| {
-                let frames = data.len() / channels;
-                // grows only when the device asks for more at once than before
-                stereo.resize(frames * 2, 0.0);
-                fill(&mut stereo);
-                for (frame, out) in data.chunks_exact_mut(channels).enumerate() {
-                    let left = stereo[frame * 2];
-                    let right = stereo[frame * 2 + 1];
-                    if channels == 1 {
-                        out[0] = T::from_sample((left + right) * 0.5);
-                    } else {
-                        out[0] = T::from_sample(left);
-                        out[1] = T::from_sample(right);
-                        for rest in &mut out[2..] {
-                            *rest = T::from_sample(0.0);
-                        }
-                    }
-                }
-            },
-            |_| {},
-            None,
-        )
-        .ok()
+    swiftify_native_audio::device::open_stereo_stream(move |output, _| fill(output), |_| {})
 }
 
 /// a source the device reads a block at a time

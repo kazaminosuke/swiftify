@@ -1,0 +1,52 @@
+name: Native audio engine
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - .github/workflows/native-audio.yml
+      - native-audio/**
+      - spotify-core/Cargo.toml
+      - spotify-core/Cargo.lock
+      - spotify-core/src/output.rs
+      - spotify-core/src/capi.rs
+
+permissions:
+  contents: read
+
+jobs:
+  native-audio:
+    strategy:
+      matrix:
+        os: [ubuntu-24.04, windows-2022]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Linux audio build dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libasound2-dev libssl-dev pkg-config
+
+      - name: Rust stable
+        run: rustup update stable
+
+      - name: Check formatting
+        if: runner.os == 'Linux'
+        run: cargo +stable fmt --check --manifest-path native-audio/Cargo.toml
+
+      - name: Test the native engine and build its standalone player
+        run: cargo +stable test --locked --all-targets --manifest-path native-audio/Cargo.toml
+
+      - name: Verify playback through ALSA
+        if: runner.os == 'Linux'
+        run: |
+          printf 'pcm.!default { type null }\n' > "$RUNNER_TEMP/swiftify-alsa.conf"
+          ALSA_CONFIG_PATH="$RUNNER_TEMP/swiftify-alsa.conf" cargo +stable test --locked --manifest-path native-audio/Cargo.toml --test device -- --ignored
+
+      - name: Test the existing Swiftify output path
+        run: cargo +stable test --locked --manifest-path spotify-core/Cargo.toml --no-default-features --features capi --lib output::tests
+
+      - name: Check core completion tests on the runner platform
+        run: cargo +stable test --locked --manifest-path spotify-core/Cargo.toml --no-default-features --features capi --lib capi::tests
