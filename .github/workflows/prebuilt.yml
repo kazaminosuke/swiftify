@@ -54,7 +54,7 @@ jobs:
         with:
           version: 6.10.3
           arch: win64_msvc2022_64
-          modules: qtshadertools qtwebsockets
+          modules: qtshadertools qtwebsockets qtnetworkauth
           cache: true
 
       - name: build
@@ -157,7 +157,7 @@ jobs:
           version: 6.12.0
           arch: linux_gcc_64
           # soloist talks to spotify's soloist over websockets
-          modules: qtshadertools qtwebsockets
+          modules: qtshadertools qtwebsockets qtnetworkauth
           cache: true
 
       # clang held to gcc 12's standard library, so it still runs on older
