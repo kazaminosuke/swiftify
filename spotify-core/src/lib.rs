@@ -54,34 +54,6 @@ use dsp::{EQ_BAND_COUNT, SharedDsp};
 use rodio::Source;
 use spectrum::{OutputHealth, SharedSpectrum, SpectrumSink};
 
-/// the output files play through. replaceable, not a oncelock: ios stops the audio unit behind
-/// this stream whenever another app interrupts us, and a stopped unit never restarts
-/// itself.
-static LOCAL_AUDIO_SINK: Mutex<Option<Arc<output::LocalOutput>>> = Mutex::new(None);
-
-/// empties the shared file sink, keeping it for the next file:
-/// replacing it would open (and leak) another output stream
-fn silence_cached_local_sink() {
-    let Ok(cached) = LOCAL_AUDIO_SINK.lock() else {
-        return;
-    };
-    if let Some(sink) = cached.as_ref() {
-        sink.stop();
-        sink.clear();
-    }
-}
-
-fn stop_cached_local_sink() {
-    let Ok(mut cached) = LOCAL_AUDIO_SINK.lock() else {
-        return;
-    };
-    let Some(sink) = cached.take() else {
-        return;
-    };
-    sink.stop();
-    sink.clear();
-}
-
 #[cfg(feature = "capi")]
 pub mod capi;
 #[cfg(feature = "swift")]
@@ -108,8 +80,7 @@ struct SpotifyState {
     /// where streamed songs are kept, and the most it may hold in bytes
     audio_cache: Option<(String, u64)>,
     local_playback: Option<file_playback::LocalPlayback>,
-    /// the output sink files play through. the backing outputstream is leaked so the
-    /// sink keeps a live device connection without breaking send on the state.
+    /// Device and control thread owned by this core, also used for live PCM.
     local_sink: Option<Arc<output::LocalOutput>>,
     /// a live buffer playing through the file output, and what stops it
     live: Option<(Arc<live_input::LiveBuffer>, Arc<AtomicBool>)>,
@@ -222,6 +193,18 @@ pub const SUPERSEDED: &str = "the request was replaced by a newer one";
 /// track (SWIFTIFY_CORE_UNAVAILABLE in the c header). the front end skips it
 pub const UNAVAILABLE: &str = "Spotify will not play this track.";
 
+#[derive(Clone, Copy, Default)]
+#[cfg_attr(not(feature = "capi"), allow(dead_code))]
+pub(crate) struct PlaybackClock {
+    pub(crate) revision: u64,
+    pub(crate) position_ms: u32,
+    pub(crate) duration_ms: u32,
+    pub(crate) submitted_ms: u32,
+    pub(crate) latency_ms: Option<u32>,
+    pub(crate) local: bool,
+    pub(crate) drained: bool,
+}
+
 pub struct SpotifyCore {
     state: Mutex<SpotifyState>,
     /// bumped by every request that changes what plays: each song asked for,
@@ -235,6 +218,9 @@ pub struct SpotifyCore {
     /// interleave: one clearing the file sink between another's clearing
     /// and its starting left both songs playing
     switching: Mutex<()>,
+    opening_output: Mutex<()>,
+    clock_revision: AtomicU64,
+    seek_generation: AtomicU64,
     spectrum: SharedSpectrum,
     dsp: SharedDsp,
     timeline: Arc<Mutex<PlaybackTimeline>>,
@@ -266,6 +252,9 @@ impl SpotifyCore {
             state: Mutex::new(SpotifyState::default()),
             playback_generation: watch::Sender::new(0),
             switching: Mutex::new(()),
+            opening_output: Mutex::new(()),
+            clock_revision: AtomicU64::new(0),
+            seek_generation: AtomicU64::new(0),
             spectrum: SharedSpectrum::new(),
             dsp: SharedDsp::new(),
             timeline: Arc::new(Mutex::new(PlaybackTimeline::default())),
@@ -533,7 +522,6 @@ impl SpotifyCore {
         self.begin_playback_request();
         self.output_health.clear();
         self.clear_local_playback();
-        stop_cached_local_sink();
         self.lock_state()?.local_sink = None;
 
         let (session, mixer, stream_bitrate, volume_normalization) = {
@@ -617,9 +605,6 @@ impl SpotifyCore {
                 return Err(SUPERSEDED.to_owned());
             }
             self.clear_local_playback();
-            // the shared sink may hold a track from before a reset, which this
-            // core does not know of and would leave playing under the stream
-            silence_cached_local_sink();
             self.spectrum.clear();
             active.set_gain(1.0);
             if let Some(standby) = &standby {
@@ -840,42 +825,91 @@ impl SpotifyCore {
     }
 
     pub fn seek(&self, position_ms: u32) -> Result<(), String> {
+        self.seek_as(position_ms, self.begin_seek())
+    }
+
+    pub(crate) fn begin_seek(&self) -> (u64, u64) {
+        let sequence = self.seek_generation.fetch_add(1, Ordering::AcqRel).wrapping_add(1);
+        (sequence, *self.playback_generation.borrow())
+    }
+
+    fn current_seek(&self, (sequence, playback): (u64, u64)) -> bool {
+        sequence == self.seek_generation.load(Ordering::Acquire) && self.is_latest_request(playback)
+    }
+
+    pub(crate) fn seek_as(&self, position_ms: u32, ticket: (u64, u64)) -> Result<(), String> {
+        if !self.current_seek(ticket) {
+            return Err(SUPERSEDED.to_owned());
+        }
         if self.local_active()? {
-            return self.local_seek(position_ms);
+            return self.local_seek(position_ms, ticket);
+        }
+        let _switching = self.lock_switching();
+        if !self.current_seek(ticket) {
+            return Err(SUPERSEDED.to_owned());
         }
         self.player()?.seek(position_ms);
         if let Ok(mut timeline) = self.timeline.lock() {
+            timeline.end_of_track = false;
             timeline.observe_position(position_ms, None);
         }
         Ok(())
     }
 
-    pub fn playback_position_ms(&self) -> u32 {
+    pub(crate) fn playback_clock(&self) -> PlaybackClock {
+        let ms = |time: Duration| time.as_millis().min(u128::from(u32::MAX)) as u32;
         if let Ok(state) = self.lock_state()
             && let Some(local) = &state.local_playback
         {
-            let duration = local.duration_ms.min(u32::MAX as u64) as u32;
-            return if duration == 0 { local.position_ms() } else { local.position_ms().min(duration) };
+            let duration = local.duration_ms.min(u64::from(u32::MAX)) as u32;
+            let clamp = |time: u32| if duration == 0 { time } else { time.min(duration) };
+            let base = ms(Duration::from_millis(local.base_position_ms));
+            let snapshot = state.local_sink.as_ref().and_then(|sink| sink.position(&local.queue));
+            let (position, submitted, latency, drained) = snapshot.map_or(
+                (base, base, None, false),
+                |snap| {
+                    let submitted = ms(snap.submitted);
+                    let position = if snap.drained {
+                        submitted
+                    } else if snap.latency.is_some() {
+                        snap.audible.map_or(base, ms)
+                    } else {
+                        submitted
+                    };
+                    (position, submitted, snap.latency.map(ms), snap.drained)
+                }
+            );
+            return PlaybackClock {
+                revision: local.revision,
+                position_ms: clamp(position),
+                duration_ms: duration,
+                submitted_ms: clamp(submitted),
+                latency_ms: latency,
+                local: true,
+                drained,
+            };
         }
-        self.timeline
-            .lock()
-            .map(|timeline| timeline.current_position_ms())
-            .unwrap_or(0)
+        self.timeline.lock().map_or_else(|_| PlaybackClock::default(), |timeline| {
+            let position = timeline.current_position_ms();
+            PlaybackClock { position_ms: position, duration_ms: timeline.duration_ms,
+                            submitted_ms: position, ..PlaybackClock::default() }
+        })
+    }
+
+    pub fn playback_position_ms(&self) -> u32 {
+        self.playback_clock().position_ms
     }
 
     pub fn playback_duration_ms(&self) -> u32 {
-        if let Ok(state) = self.lock_state()
-            && let Some(local) = &state.local_playback
-        {
-            return local.duration_ms.min(u32::MAX as u64) as u32;
-        }
-        self.timeline
-            .lock()
-            .map(|timeline| timeline.duration_ms)
-            .unwrap_or(0)
+        self.playback_clock().duration_ms
     }
 
     pub fn take_end_of_track(&self) -> bool {
+        if let Ok(state) = self.lock_state()
+            && let Some(local) = &state.local_playback
+        {
+            return state.local_sink.as_ref().is_some_and(|sink| sink.take_drained(&local.queue));
+        }
         self.timeline
             .lock()
             .map(|mut timeline| std::mem::take(&mut timeline.end_of_track))
@@ -973,8 +1007,7 @@ impl SpotifyCore {
             self.spectrum.clone(),
         );
         sink.stop();
-        sink.clear();
-        sink.append(source);
+        sink.append(source)?;
         sink.play();
         if let Some((_, previous)) = self.lock_state()?.live.replace((buffer, cancel)) {
             previous.store(true, Ordering::Relaxed);
@@ -997,7 +1030,6 @@ impl SpotifyCore {
             cancel.store(true, Ordering::Relaxed);
             if let Ok(sink) = self.resolve_live_sink() {
                 sink.stop();
-                sink.clear();
             }
             self.spectrum.clear();
         }
@@ -1026,17 +1058,21 @@ impl SpotifyCore {
     }
 
     fn play_path_as(&self, path: PathBuf, ticket: u64) -> Result<(), String> {
-        // opened before the outputs are touched, so a request replaced while
-        // it reads the file leaves the newer one playing undisturbed
+        // Prepare the decoder and metadata before changing the active source.
         let decoder = Self::open_decoder(&path)?;
+        let duration_ms = decoder.total_duration()
+            .map(|d| d.as_millis() as u64)
+            .or_else(|| local::measure_duration_ms(&path))
+            .unwrap_or(0);
+        let replay_gain = local::replay_gain(&path);
 
         let _switching = self.lock_switching();
         if !self.is_latest_request(ticket) {
             return Err(SUPERSEDED.to_owned());
         }
-        self.clear_local_playback();
-        // stopped, not paused: a stream still loading would otherwise be
-        // kept, and start when it arrives, over this track
+        let sink = self.resolve_live_sink()?;
+        let source = self.prepare_local(&sink, decoder, Duration::ZERO, replay_gain)?;
+        self.local_playback_active.store(true, Ordering::Release);
         if let Ok((active, standby)) = self.player_slots() {
             active.player.stop();
             if let Some(standby) = standby {
@@ -1044,57 +1080,47 @@ impl SpotifyCore {
                 standby.player.stop();
             }
         }
-        // a file whose header does not say how long it is (a variable rate
-        // mp3 without one) is measured, so it can still be seeked
-        let duration_ms = decoder
-            .total_duration()
-            .map(|d| d.as_millis() as u64)
-            .or_else(|| local::measure_duration_ms(&path))
-            .unwrap_or(0);
-        let pushed_frames = Arc::new(AtomicU64::new(0));
-        let cancel = Arc::new(AtomicBool::new(false));
-        let source_frames = Arc::clone(&pushed_frames);
-        let spectrum = self.spectrum.clone();
-        let replay_gain = local::replay_gain(&path);
-        let source = file_playback::LocalTrackSource::new(
-            decoder,
-            spectrum,
-            source_frames,
-            Arc::clone(&cancel),
-            self.dsp.clone(),
-            replay_gain,
-            Arc::clone(&self.volume_normalization),
-        );
 
-        let sink = self.resolve_live_sink()?;
-        sink.stop();
-        sink.clear();
-
-        // position is derived from the count of consumed samples. rodio consumes
-        // at real time while playing, so no explicit clock is required.
-        sink.append(source);
-        sink.play();
-
-        {
+        sink.pause();
+        self.reset_timeline();
+        let previous = {
             let mut state = self.lock_state()?;
+            if let Some((_, cancel)) = state.live.take() {
+                cancel.store(true, Ordering::Release);
+            }
             state.local_playback = Some(file_playback::LocalPlayback {
-                path: path.clone(),
+                path,
                 duration_ms,
-                pushed_frames,
+                queue: Arc::clone(&source.queue),
                 base_position_ms: 0,
                 replay_gain,
-                cancel: Arc::clone(&cancel),
+                revision: self.next_clock_revision(),
             });
-        }
-        self.local_playback_active.store(true, Ordering::Release);
-        self.reset_timeline();
-        if let Ok(mut timeline) = self.timeline.lock() {
-            timeline.duration_ms = duration_ms.min(u32::MAX as u64) as u32;
-            timeline.observe_position(0, Some(true));
-        }
+            sink.install(source)
+        };
+        drop(previous);
 
-        self.spawn_local_end_watcher(cancel);
+        sink.play();
         Ok(())
+    }
+
+    fn next_clock_revision(&self) -> u64 {
+        self.clock_revision.fetch_add(1, Ordering::Relaxed).wrapping_add(1)
+    }
+
+    fn prepare_local(
+        &self,
+        sink: &output::LocalOutput,
+        decoder: swiftify_native_audio::decode::FileSource,
+        offset: Duration,
+        replay_gain: f32,
+    ) -> Result<output::OutputSource, String> {
+        let rate = sink.rate();
+        let mut source = file_playback::LocalTrackSource::new(
+            decoder, self.spectrum.clone(), rate, offset, self.dsp.clone(), replay_gain,
+            Arc::clone(&self.volume_normalization),
+        );
+        sink.prepare(offset, rate as usize / 16, move |frames| source.read(frames))
     }
 
     pub fn set_volume(&self, volume: f32) -> Result<(), String> {
@@ -1317,28 +1343,15 @@ impl SpotifyCore {
     }
 
     fn resolve_live_sink(&self) -> Result<Arc<output::LocalOutput>, String> {
-        {
-            let state = self.lock_state()?;
-            if let Some(sink) = &state.local_sink {
-                return Ok(Arc::clone(sink));
-            }
+        let _opening = self.opening_output.lock()
+            .map_err(|_| "the audio output for files is unavailable".to_owned())?;
+        if let Some(sink) = &self.lock_state()?.local_sink {
+            return Ok(Arc::clone(sink));
         }
-        let sink = {
-            let mut cached = LOCAL_AUDIO_SINK
-                .lock()
-                .map_err(|_| "the audio output for files is unavailable".to_owned())?;
-            match cached.as_ref() {
-                Some(sink) => Arc::clone(sink),
-                None => {
-                    let created = Arc::new(output::LocalOutput::open().ok_or_else(|| {
-                        self.output_health.mark_stalled();
-                        "no audio output device is available".to_owned()
-                    })?);
-                    *cached = Some(Arc::clone(&created));
-                    created
-                }
-            }
-        };
+        let sink = Arc::new(output::LocalOutput::open().ok_or_else(|| {
+            self.output_health.mark_stalled();
+            "no audio output device is available".to_owned()
+        })?);
         let mut state = self.lock_state()?;
         sink.set_volume(state.volume);
         state.local_sink = Some(Arc::clone(&sink));
@@ -1346,121 +1359,70 @@ impl SpotifyCore {
     }
 
     fn clear_local_playback(&self) {
-        self.local_playback_active.store(false, Ordering::Release);
-        let (local, sink) = match self.lock_state() {
-            Ok(mut state) => (state.local_playback.take(), state.local_sink.clone()),
+        let sink = match self.lock_state() {
+            Ok(mut state) => {
+                state.local_playback.take();
+                if let Some((_, cancel)) = state.live.take() {
+                    cancel.store(true, Ordering::Release);
+                }
+                state.local_sink.clone()
+            }
             Err(_) => return,
         };
-        if let Some(local) = local {
-            local.cancel.store(true, Ordering::Relaxed);
-        }
         if let Some(sink) = sink {
             sink.stop();
-            sink.clear();
         }
+        self.local_playback_active.store(false, Ordering::Release);
     }
 
-    fn local_seek(&self, position_ms: u32) -> Result<(), String> {
-        let playback = self
-            .lock_state()?
-            .local_playback
-            .clone()
+    fn local_seek(&self, position_ms: u32, ticket: (u64, u64)) -> Result<(), String> {
+        let playback = self.lock_state()?.local_playback.clone()
             .ok_or_else(|| "no local playback is active".to_owned())?;
         let duration = playback.duration_ms;
         let target = if duration == 0 { u64::from(position_ms) } else { u64::from(position_ms).min(duration) };
-        let path = playback.path.clone();
-        let mut decoder = Self::open_decoder(&path)?;
-        if target != 0 && decoder.try_seek(Duration::from_millis(target)).is_err() {
-            // A failed demuxer seek need not preserve its cursor. Start again
-            // before counting samples for the sequential fallback.
-            decoder = Self::open_decoder(&path)?;
-            let target_samples = target * u64::from(decoder.sample_rate()) / 1_000 * u64::from(decoder.channels());
-            let skipped = decoder.by_ref().take(target_samples as usize).count() as u64;
-            if skipped < target_samples {
-                return Err("local seek exceeds the end of the file".to_owned());
+        let mut decoder = Self::open_decoder(&playback.path)?;
+        let offset = Duration::from_millis(target);
+        if target != 0 && decoder.try_seek(offset).is_err() {
+            // A failed demuxer seek need not preserve its cursor. Check for
+            // superseding requests between bounded blocks of sequential reads.
+            decoder = Self::open_decoder(&playback.path)?;
+            let mut remaining = target * u64::from(decoder.sample_rate()) / 1_000
+                * u64::from(decoder.channels());
+            while remaining > 0 {
+                if !self.current_seek(ticket) {
+                    return Err(SUPERSEDED.to_owned());
+                }
+                let count = remaining.min(8_192) as usize;
+                if decoder.by_ref().take(count).count() < count {
+                    return Err("local seek exceeds the end of the file".to_owned());
+                }
+                remaining -= count as u64;
             }
         }
 
         let _switching = self.lock_switching();
-        if self.lock_state()?.local_playback.as_ref()
-            .is_none_or(|current| !Arc::ptr_eq(&current.cancel, &playback.cancel))
-        {
+        if !self.current_seek(ticket) {
             return Err(SUPERSEDED.to_owned());
         }
         let sink = self.resolve_live_sink()?;
-        let was_paused = sink.is_paused();
-        playback.cancel.store(true, Ordering::Relaxed);
-        sink.clear();
-
-        let pushed_frames = Arc::new(AtomicU64::new(0));
-        let cancel = Arc::new(AtomicBool::new(false));
-        let spectrum = self.spectrum.clone();
-        let source_frames = Arc::clone(&pushed_frames);
-        let replay_gain = playback.replay_gain;
-        let source = file_playback::LocalTrackSource::new(
-            decoder,
-            spectrum,
-            source_frames,
-            Arc::clone(&cancel),
-            self.dsp.clone(),
-            replay_gain,
-            Arc::clone(&self.volume_normalization),
-        );
-
-        sink.append(source);
-        if was_paused {
-            sink.pause();
-        } else {
-            sink.play();
-        }
-
+        let source = self.prepare_local(&sink, decoder, offset, playback.replay_gain)?;
         let mut state = self.lock_state()?;
-        state.local_playback = Some(file_playback::LocalPlayback {
-            path,
-            duration_ms: duration,
-            pushed_frames,
-            base_position_ms: target,
-            replay_gain,
-            cancel: Arc::clone(&cancel),
-        });
-        drop(state);
-        if let Ok(mut timeline) = self.timeline.lock() {
-            timeline.end_of_track = false;
-            timeline.observe_position(target as u32, Some(!was_paused));
+        if !self.current_seek(ticket) || state.local_playback.as_ref()
+            .is_none_or(|current| current.revision != playback.revision)
+        {
+            return Err(SUPERSEDED.to_owned());
         }
-        self.spawn_local_end_watcher(cancel);
+        state.local_playback = Some(file_playback::LocalPlayback {
+            queue: Arc::clone(&source.queue),
+            base_position_ms: target,
+            revision: self.next_clock_revision(),
+            ..playback
+        });
+        let previous = sink.install(source);
+        drop(state);
+        drop(previous);
+        self.spectrum.clear();
         Ok(())
-    }
-
-    fn spawn_local_end_watcher(&self, cancel: Arc<AtomicBool>) {
-        let sink = match self.resolve_live_sink() {
-            Ok(sink) => sink,
-            Err(_) => return,
-        };
-        let timeline = Arc::clone(&self.timeline);
-        std::thread::Builder::new()
-            .name("swiftify-local-end".to_owned())
-            .spawn(move || {
-                while !cancel.load(Ordering::Relaxed) && !sink.is_lost() && !sink.empty() {
-                    std::thread::sleep(Duration::from_millis(200));
-                }
-                if cancel.load(Ordering::Relaxed) || sink.is_lost() {
-                    return;
-                }
-                // a short grace period ensures any trailing source has been flushed.
-                std::thread::sleep(Duration::from_millis(100));
-                if cancel.load(Ordering::Relaxed) || sink.is_lost() {
-                    return;
-                }
-                if let Ok(mut timeline) = timeline.lock() {
-                    timeline.end_of_track = true;
-                    timeline.is_playing = false;
-                    timeline.observed_at = Some(Instant::now());
-                }
-                // the device stops until something else plays
-                sink.pause_if_ended();
-            })
-            .ok();
     }
 
     fn reset_timeline(&self) {

@@ -254,7 +254,6 @@ pub(crate) struct PlayQueue {
     state: Mutex<QueueState>,
 }
 
-#[derive(Default)]
 struct QueueState {
     chunks: VecDeque<PlayedChunk>,
     /// the analysis window being filled, carried from chunk to chunk as the
@@ -263,6 +262,16 @@ struct QueueState {
     /// chunks played out, for the writing thread to free: freeing them on
     /// the device's thread had it handing memory back to the system there
     spent: Vec<PlayedChunk>,
+}
+
+impl Default for QueueState {
+    fn default() -> Self {
+        Self {
+            chunks: VecDeque::new(),
+            window: AnalysisWindow::default(),
+            spent: Vec::with_capacity(SpectrumSink::QUEUE_HIGH_WATER * 2),
+        }
+    }
 }
 
 impl PlayQueue {
@@ -280,8 +289,14 @@ impl PlayQueue {
     /// leaving the device's thread the list `spent` was (emptied, its room
     /// kept) to fill again
     fn push(&self, chunk: PlayedChunk, spent: &mut Vec<PlayedChunk>) {
+        // Free retired packets on the writer before recycling their buffer.
+        spent.clear();
         let mut state = self.state();
         state.chunks.push_back(chunk);
+        // The device can finish every queued packet before the next write.
+        // Size the recycled buffer here, where allocation is permitted.
+        let capacity = state.chunks.len().max(SpectrumSink::QUEUE_HIGH_WATER * 2);
+        spent.reserve(capacity);
         std::mem::swap(&mut state.spent, spent);
     }
 
@@ -293,24 +308,25 @@ impl PlayQueue {
     /// fills interleaved stereo from the front of the queue, and silence once
     /// it runs out
     pub(crate) fn fill(&self, out: &mut [f32]) {
+        let Ok(mut state) = self.state.try_lock() else {
+            out.fill(0.0);
+            return;
+        };
+        let QueueState {
+            chunks,
+            window,
+            spent,
+        } = &mut *state;
         let mut written = 0;
-        {
-            let mut state = self.state();
-            let QueueState {
-                chunks,
-                window,
-                spent,
-            } = &mut *state;
-            while written < out.len() {
-                let Some(front) = chunks.front_mut() else {
-                    break;
-                };
-                written += front.fill(&mut out[written..], window);
-                if front.is_done()
-                    && let Some(played) = chunks.pop_front()
-                {
-                    spent.push(played);
-                }
+        while written < out.len() && spent.len() < spent.capacity() {
+            let Some(front) = chunks.front_mut() else {
+                break;
+            };
+            written += front.fill(&mut out[written..], window);
+            if front.is_done()
+                && let Some(played) = chunks.pop_front()
+            {
+                spent.push(played);
             }
         }
         out[written..].fill(0.0);
@@ -355,7 +371,7 @@ impl PlayedChunk {
 /// its first frame and running past its last: about two frames too many a
 /// packet at 48 khz, so music played 0.4% slow, with a small jump in the wave
 /// at every packet's edge, some forty times a second.
-struct RateConverter {
+pub(crate) struct RateConverter {
     to: u32,
     /// input frames an output frame steps over
     step: f64,
@@ -371,9 +387,13 @@ impl RateConverter {
     const CHANNELS: usize = NUM_CHANNELS as usize;
 
     fn new(to: u32) -> Self {
+        Self::from_rates(SAMPLE_RATE, to)
+    }
+
+    pub(crate) fn from_rates(from: u32, to: u32) -> Self {
         Self {
             to,
-            step: f64::from(SAMPLE_RATE) / f64::from(to),
+            step: f64::from(from) / f64::from(to),
             position: 0.0,
             previous: [0.0; NUM_CHANNELS as usize],
             primed: false,
@@ -387,7 +407,7 @@ impl RateConverter {
     }
 
     /// interleaved frames in, interleaved frames out
-    fn convert(&mut self, input: &[f32]) -> Vec<f32> {
+    pub(crate) fn convert(&mut self, input: &[f32]) -> Vec<f32> {
         let frames = input.len() / Self::CHANNELS;
         if frames == 0 {
             return Vec::new();
@@ -669,7 +689,7 @@ struct DecodedChunk {
 }
 
 /// the analysis window being filled, carried from chunk to chunk
-struct AnalysisWindow {
+pub(crate) struct AnalysisWindow {
     samples: [f32; ANALYSIS_SAMPLE_COUNT],
     index: usize,
     enabled: bool,
@@ -690,7 +710,7 @@ impl Default for AnalysisWindow {
 
 impl AnalysisWindow {
     /// starts afresh if the levels were cleared since it was begun
-    fn follow(&mut self, spectrum: &SharedSpectrum) {
+    pub(crate) fn follow(&mut self, spectrum: &SharedSpectrum) {
         let generation = spectrum.generation();
         if generation != self.generation {
             self.generation = generation;
@@ -700,7 +720,7 @@ impl AnalysisWindow {
 
     /// takes samples in runs, a window's room at a time, and queues each
     /// window as it fills
-    fn feed(&mut self, spectrum: &SharedSpectrum, output_gain: f64, mut samples: &[f32]) {
+    pub(crate) fn feed(&mut self, spectrum: &SharedSpectrum, output_gain: f64, mut samples: &[f32]) {
         while !samples.is_empty() {
             if self.index == 0 {
                 self.enabled = spectrum.is_enabled();
@@ -1143,6 +1163,15 @@ mod tests {
                 (range.lower_bin..=range.upper_bin).contains(&bin)
             })
             .expect("frequency should be covered by the visualizer")
+    }
+
+    #[test]
+    fn spotify_device_callback_does_not_wait_for_its_writer() {
+        let queue = PlayQueue::default();
+        let _writer = queue.state();
+        let mut samples = [1.0; 8];
+        queue.fill(&mut samples);
+        assert_eq!(samples, [0.0; 8]);
     }
 
     #[test]

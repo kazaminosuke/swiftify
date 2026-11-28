@@ -142,25 +142,28 @@ where
     E: FnMut(cpal::StreamError) + Send + 'static,
 {
     let channels = usize::from(config.channels);
-    let mut stereo = Vec::new();
+    const SCRATCH_FRAMES: usize = 2_048;
+    let mut stereo = vec![0.0; SCRATCH_FRAMES * 2].into_boxed_slice();
     device
         .build_output_stream::<T, _, _>(
             config,
             move |data: &mut [T], timing| {
-                let frames = data.len() / channels;
-                // grows only when the device asks for more at once than before
-                stereo.resize(frames * 2, 0.0);
-                fill(&mut stereo, timing);
-                for (frame, out) in data.chunks_exact_mut(channels).enumerate() {
-                    let left = stereo[frame * 2];
-                    let right = stereo[frame * 2 + 1];
-                    if channels == 1 {
-                        out[0] = T::from_sample((left + right) * 0.5);
-                    } else {
-                        out[0] = T::from_sample(left);
-                        out[1] = T::from_sample(right);
-                        for rest in &mut out[2..] {
-                            *rest = T::from_sample(0.0);
+                for chunk in data.chunks_mut(SCRATCH_FRAMES * channels) {
+                    let frames = chunk.len() / channels;
+                    let scratch = &mut stereo[..frames * 2];
+                    fill(scratch, timing);
+                    for (out, pair) in chunk
+                        .chunks_exact_mut(channels)
+                        .zip(scratch.as_chunks::<2>().0)
+                    {
+                        let left = pair[0];
+                        let right = pair[1];
+                        if channels == 1 {
+                            out[0] = T::from_sample((left + right) * 0.5);
+                        } else {
+                            out[0] = T::from_sample(left);
+                            out[1] = T::from_sample(right);
+                            out[2..].fill(T::from_sample(0.0));
                         }
                     }
                 }

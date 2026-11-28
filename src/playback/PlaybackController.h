@@ -236,6 +236,7 @@ private:
     QCoro::Task<> runStartPlayback(Song song, CancelToken token, bool fromSearch, bool steppingBack,
                                    quint32 crossfadeDurationMs, quint32 initialPositionMs);
     QCoro::Task<> runResume(CancelToken token);
+    QCoro::Task<> runSeek(quint32 positionMs, CancelToken token);
     QCoro::Task<> restartAudioOutput(CancelToken token);
     QCoro::Task<> runLoadLyrics(Song song, CancelToken token);
     void cancelPlaybackRequest();
@@ -299,6 +300,7 @@ private:
     /// whatever is asking the core to make sound right now: a song loading, a
     /// resume, an output rebuild. empty once it finished or was withdrawn.
     TaskSlot m_playbackRequest;
+    TaskSlot m_seekRequest;
     bool m_playbackNeedsLoad = false;
     bool m_restoredPlayback = false;
     quint32 m_resumePositionMs = 0;
@@ -315,6 +317,8 @@ private:
     quint32 m_publishedPositionMs = 0;
     quint32 m_durationMs = 0;
     quint32 m_lastSyncedMediaPosition = std::numeric_limits<quint32>::max();
+    quint64 m_clockRevision = 0;
+    bool m_localClock = false;
     quint64 m_crossfadeSerial = 0;
     bool m_crossfadeStarted = false;
     quint32 m_crossfadeMs = 0;

@@ -16,74 +16,55 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-//! a music file played from disk, of the person's own: decoded by rodio,
-//! counted for the position, fed to the spectrum and the equalizer on its way
-//! to the output.
+//! Local PCM preparation. The decoder and DSP live on the producer thread,
+//! and every device frame carries its position in the original recording.
 
 use std::{
     collections::VecDeque,
     path::PathBuf,
     sync::{
         Arc,
-        atomic::{AtomicBool, AtomicU64, Ordering},
+        atomic::{AtomicBool, Ordering},
     },
     time::Duration,
 };
 
-use librespot::playback::{NUM_CHANNELS, SAMPLE_RATE};
-use rodio::{Source, source::UniformSourceIterator};
-use swiftify_native_audio::decode::FileSource;
+use librespot::playback::SAMPLE_RATE;
+use rodio::source::UniformSourceIterator;
+use swiftify_native_audio::{
+    decode::FileSource,
+    render::{PcmFrame, RenderQueue},
+};
 
 use crate::dsp::{DspProcessor, SharedDsp};
-use crate::output::BlockSource;
-use crate::spectrum::{ANALYSIS_SAMPLE_COUNT, SharedSpectrum};
+use crate::spectrum::{AnalysisWindow, RateConverter, SharedSpectrum};
 
-// ---------------------------------------------------------------------------
-// local playback
-// ---------------------------------------------------------------------------
-
-/// active local-file playback session.
 #[derive(Clone)]
 pub(crate) struct LocalPlayback {
-    /// on-disk path of the file being played (needed for re-decoding on seek).
     pub(crate) path: PathBuf,
-    /// total duration in milliseconds.
     pub(crate) duration_ms: u64,
-    /// number of decoded samples (all channels) already consumed.
-    pub(crate) pushed_frames: Arc<AtomicU64>,
-    /// absolute position represented by the first sample in the active source.
+    pub(crate) queue: Arc<RenderQueue>,
     pub(crate) base_position_ms: u64,
-    /// linear gain from the file's replaygain tags (1.0 when untagged).
     pub(crate) replay_gain: f32,
-    /// signals an in-flight decode to stop (on a seek/track change).
-    pub(crate) cancel: Arc<AtomicBool>,
+    pub(crate) revision: u64,
 }
 
-impl LocalPlayback {
-    pub(crate) fn position_ms(&self) -> u32 {
-        let samples = self.pushed_frames.load(Ordering::Relaxed);
-        self.base_position_ms
-            .saturating_add(samples / NUM_CHANNELS as u64 * 1_000 / SAMPLE_RATE as u64)
-            .min(u32::MAX as u64) as u32
-    }
-}
-
-/// wraps a rodio decoder so decoded samples are forwarded to the live sink, fed into the
-/// spectrum analyzer, and counted for position tracking.
 const DSP_BLOCK: usize = 4_096;
 
 pub(crate) struct LocalTrackSource {
     inner: UniformSourceIterator<FileSource>,
     spectrum: SharedSpectrum,
-    pushed_frames: Arc<AtomicU64>,
-    cancel: Arc<AtomicBool>,
+    sample_rate: u32,
+    offset: Duration,
+    decoded_frames: u64,
+    media_frames: f64,
+    block_tempo: f64,
     replay_gain: f32,
     normalise: Arc<AtomicBool>,
-    analysis_samples: [f32; ANALYSIS_SAMPLE_COUNT],
-    analysis_index: usize,
-    analysis_enabled: bool,
+    analysis: AnalysisWindow,
+    spectrum_pcm: Vec<f32>,
+    spectrum_rate: Option<RateConverter>,
     dsp: DspProcessor,
-    /// processed samples waiting to be handed out one at a time.
     processed: VecDeque<f32>,
     drained: bool,
 }
@@ -92,150 +73,92 @@ impl LocalTrackSource {
     pub(crate) fn new(
         decoder: FileSource,
         spectrum: SharedSpectrum,
-        pushed_frames: Arc<AtomicU64>,
-        cancel: Arc<AtomicBool>,
+        sample_rate: u32,
+        offset: Duration,
         dsp: SharedDsp,
         replay_gain: f32,
         normalise: Arc<AtomicBool>,
     ) -> Self {
         Self {
-            inner: UniformSourceIterator::new(decoder, NUM_CHANNELS as u16, SAMPLE_RATE),
+            inner: UniformSourceIterator::new(decoder, 2, sample_rate),
             spectrum,
-            pushed_frames,
-            cancel,
+            sample_rate,
+            offset,
+            decoded_frames: 0,
+            media_frames: 0.0,
+            block_tempo: 1.0,
             replay_gain,
             normalise,
-            analysis_samples: [0.0; ANALYSIS_SAMPLE_COUNT],
-            analysis_index: 0,
-            analysis_enabled: false,
-            dsp: DspProcessor::new(dsp, SAMPLE_RATE, NUM_CHANNELS as u16),
+            analysis: AnalysisWindow::default(),
+            spectrum_pcm: Vec::new(),
+            spectrum_rate: (sample_rate != SAMPLE_RATE)
+                .then(|| RateConverter::from_rates(sample_rate, SAMPLE_RATE)),
+            dsp: DspProcessor::new(dsp, sample_rate, 2),
             processed: VecDeque::new(),
             drained: false,
         }
     }
 
-    /// decodes a block and runs the chain over it. pushed_frames counts what
-    /// was read from the file, not what came out: the progress bar tracks the
-    /// position in the recording, which a tempo change does not move.
     fn fill(&mut self) {
         while self.processed.is_empty() && !self.drained {
-            let mut block = Vec::with_capacity(DSP_BLOCK);
-            for _ in 0..DSP_BLOCK {
-                match self.inner.next() {
-                    Some(sample) => block.push(sample),
-                    None => {
-                        self.drained = true;
-                        break;
-                    }
-                }
-            }
+            let mut block: Vec<f32> = self.inner.by_ref().take(DSP_BLOCK).collect();
+            // UniformSourceIterator normally has complete stereo frames.
+            block.truncate(block.len() / 2 * 2);
             if block.is_empty() {
+                self.drained = true;
+                let outstanding = ((self.decoded_frames as f64 - self.media_frames)
+                    / self.block_tempo)
+                    .round() as usize;
+                self.processed.extend(
+                    self.dsp
+                        .finish(outstanding.min(self.sample_rate as usize / 4)),
+                );
                 return;
             }
-            self.pushed_frames
-                .fetch_add(block.len() as u64, Ordering::Relaxed);
+            self.decoded_frames += (block.len() / 2) as u64;
             if self.normalise.load(Ordering::Relaxed) && (self.replay_gain - 1.0).abs() > 1e-4 {
                 for sample in &mut block {
                     *sample *= self.replay_gain;
                 }
             }
             self.processed.extend(self.dsp.process(block));
+            self.block_tempo = f64::from(self.dsp.tempo());
         }
     }
-}
 
-impl LocalTrackSource {
-    /// hands the analysis what is about to play, a run at a time
-    fn analyse(&mut self, mut samples: &[f32]) {
-        while !samples.is_empty() {
-            if self.analysis_index == 0 {
-                self.analysis_enabled = self.spectrum.is_enabled();
-            }
-            let taken = samples
-                .len()
-                .min(ANALYSIS_SAMPLE_COUNT - self.analysis_index);
-            if self.analysis_enabled {
-                self.analysis_samples[self.analysis_index..self.analysis_index + taken]
-                    .copy_from_slice(&samples[..taken]);
-            }
-            self.analysis_index += taken;
-            samples = &samples[taken..];
-            if self.analysis_index == ANALYSIS_SAMPLE_COUNT {
-                if self.analysis_enabled {
-                    self.spectrum
-                        .queue_interleaved_f32(self.analysis_samples, 1.0);
-                }
-                self.analysis_index = 0;
-            }
-        }
-    }
-}
-
-impl Iterator for LocalTrackSource {
-    type Item = f32;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        let mut sample = [0.0];
-        (self.read(&mut sample) == 1).then_some(sample[0])
-    }
-}
-
-impl BlockSource for LocalTrackSource {
-    fn read(&mut self, out: &mut [f32]) -> usize {
-        if self.cancel.load(Ordering::Relaxed) {
-            return 0;
-        }
-        let mut written = 0;
-        while written < out.len() {
+    pub(crate) fn read(&mut self, output: &mut [PcmFrame]) -> usize {
+        let mut count = 0;
+        for target in output.iter_mut() {
             if self.processed.is_empty() {
                 self.fill();
-                if self.processed.is_empty() {
-                    break;
-                }
             }
-            let (front, _) = self.processed.as_slices();
-            let taken = front.len().min(out.len() - written);
-            out[written..written + taken].copy_from_slice(&front[..taken]);
-            self.processed.drain(..taken);
-            written += taken;
+            let Some(left) = self.processed.pop_front() else {
+                break;
+            };
+            let Some(right) = self.processed.pop_front() else {
+                break;
+            };
+            self.media_frames =
+                (self.media_frames + self.block_tempo).min(self.decoded_frames as f64);
+            let time = Duration::from_secs_f64(self.media_frames / f64::from(self.sample_rate));
+            *target = PcmFrame {
+                stereo: [left, right],
+                media_end: self.offset.saturating_add(time),
+            };
+            count += 1;
         }
-        self.analyse(&out[..written]);
-        written
-    }
-}
-
-impl Source for LocalTrackSource {
-    fn current_span_len(&self) -> Option<usize> {
-        self.inner.current_span_len()
-    }
-
-    fn channels(&self) -> rodio::ChannelCount {
-        self.inner.channels()
-    }
-
-    fn sample_rate(&self) -> rodio::SampleRate {
-        self.inner.sample_rate()
-    }
-
-    fn total_duration(&self) -> Option<Duration> {
-        self.inner.total_duration()
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn local_position_includes_seek_offset() {
-        let playback = LocalPlayback {
-            path: PathBuf::new(),
-            duration_ms: 120_000,
-            pushed_frames: Arc::new(AtomicU64::new(44_100 as u64 * 2)),
-            base_position_ms: 30_000,
-            replay_gain: 1.0,
-            cancel: Arc::new(AtomicBool::new(false)),
-        };
-        assert_eq!(playback.position_ms(), 31_000);
+        if self.spectrum.is_enabled() {
+            self.analysis.follow(&self.spectrum);
+            self.spectrum_pcm.clear();
+            self.spectrum_pcm
+                .extend(output[..count].iter().flat_map(|frame| frame.stereo));
+            if let Some(converter) = &mut self.spectrum_rate {
+                let normalized = converter.convert(&self.spectrum_pcm);
+                self.analysis.feed(&self.spectrum, 1.0, &normalized);
+            } else {
+                self.analysis.feed(&self.spectrum, 1.0, &self.spectrum_pcm);
+            }
+        }
+        count
     }
 }
