@@ -11,6 +11,8 @@ class QNetworkReply;
 
 namespace swiftify::youtube {
 
+enum class ApiFailure { None, Unauthorized, Forbidden, Quota, Throttled, Other };
+
 enum class Collection { Search, SearchChannels, SearchPlaylists, Likes, Playlists, PlaylistItems, Channel };
 
 struct Item {
@@ -26,6 +28,8 @@ struct Page {
     QString nextPage;
     QString error;
     int status = 0;
+    ApiFailure failure = ApiFailure::None;
+    qint64 retryAfter = -1;
 };
 
 class Api {
