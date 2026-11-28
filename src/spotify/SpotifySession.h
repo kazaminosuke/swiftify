@@ -28,6 +28,7 @@
 
 #include <QDateTime>
 #include <QObject>
+#include <QPointer>
 #include <QTimer>
 #include <QUrl>
 #include <QtQml/qqmlregistration.h>
@@ -247,6 +248,7 @@ private:
     bool m_evaluatingStoredLogin = m_enabled;
     /// reading the saved logins at launch is still under way
     bool m_restoring = false;
+    bool m_loggingOut = false;
     bool m_playbackConnectionIsSuspect = false;
     std::optional<LoginPurpose> m_loginPurpose;
     QUrl m_authorizationUrl;
@@ -289,7 +291,11 @@ QCoro::Task<T> SpotifySession::withLibraryAccessToken(std::function<QCoro::Task<
 {
 #ifdef SWIFTIFY_HAS_SPOTIFY
     const quint64 generation = m_generation;
-    if (!m_enabled || m_libraryAccessToken.isEmpty()) {
+    const auto requireSession = [owner = QPointer(this), generation] {
+        if (!owner) throw Cancelled();
+        owner->throwIfStale(generation);
+    };
+    if (!m_enabled || m_loggingOut || m_libraryAccessToken.isEmpty()) {
         throw SpotifyError(SpotifyError::Kind::Session, QStringLiteral("Connect your Spotify library to continue."));
     }
 
@@ -299,7 +305,7 @@ QCoro::Task<T> SpotifySession::withLibraryAccessToken(std::function<QCoro::Task<
             && m_libraryAccessTokenExpiration <= QDateTime::currentDateTimeUtc().addSecs(60)) {
             accessToken = co_await refreshLibraryAccessToken();
         }
-        throwIfStale(generation);
+        requireSession();
 
         bool retry = false;
         if constexpr (std::is_void_v<T>) {
@@ -312,13 +318,14 @@ QCoro::Task<T> SpotifySession::withLibraryAccessToken(std::function<QCoro::Task<
                 retry = true;
             }
             if (retry) {
-                throwIfStale(generation);
+                requireSession();
                 const QString retryToken = !m_libraryAccessToken.isEmpty() && m_libraryAccessToken != accessToken
                     ? m_libraryAccessToken
                     : co_await refreshLibraryAccessToken();
+                requireSession();
                 co_await operation(retryToken);
             }
-            throwIfStale(generation);
+            requireSession();
             co_return;
         } else {
             std::optional<T> value;
@@ -331,18 +338,19 @@ QCoro::Task<T> SpotifySession::withLibraryAccessToken(std::function<QCoro::Task<
                 retry = true;
             }
             if (retry) {
-                throwIfStale(generation);
+                requireSession();
                 const QString retryToken = !m_libraryAccessToken.isEmpty() && m_libraryAccessToken != accessToken
                     ? m_libraryAccessToken
                     : co_await refreshLibraryAccessToken();
+                requireSession();
                 value = co_await operation(retryToken);
             }
-            throwIfStale(generation);
+            requireSession();
             co_return std::move(*value);
         }
     } catch (const SpotifyError &) {
         // a failure that lands after a logout belongs to nobody.
-        throwIfStale(generation);
+        requireSession();
         throw;
     }
 #else

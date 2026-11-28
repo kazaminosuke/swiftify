@@ -17,19 +17,20 @@
  */
 
 #include "stats/StatsFmClient.h"
+#include "network/BoundedReply.h"
 
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QNetworkAccessManager>
 #include <QNetworkReply>
+#include <QScopeGuard>
 #include <QRegularExpression>
 #include <QSet>
 #include <QTimeZone>
 #include <QCoroNetworkReply>
 
 #include <algorithm>
-#include <memory>
 #include <vector>
 
 namespace swiftify {
@@ -117,22 +118,38 @@ QString StatsFmClient::rangeName(StatsPeriod period)
     return QStringLiteral("weeks");
 }
 
-QCoro::Task<QJsonValue> StatsFmClient::get(QString path, QUrlQuery query)
+QCoro::Task<QJsonValue> StatsFmClient::get(QString path, QUrlQuery query, CancelToken cancel)
 {
+    throwIfCancelled(cancel);
+    if (m_activeRequests >= 12) {
+        throw StatsFmError(StatsFmError::Kind::Network, QStringLiteral("Too many stats.fm requests are in progress."));
+    }
+    ++m_activeRequests;
+    const QPointer<StatsFmClient> owner(this);
+    const auto release = qScopeGuard([owner] { if (owner) --owner->m_activeRequests; });
     QUrl url(kApiBase + path);
     url.setQuery(query);
     QNetworkRequest request(url);
+    privateRequest(request);
     request.setRawHeader("Accept", "application/json");
     request.setTransferTimeout(15'000);
 
-    std::unique_ptr<QNetworkReply> reply(m_network->get(request));
-    co_await qCoro(reply.get()).waitForFinished();
+    constexpr qint64 maxStatsBytes = 2 * 1024 * 1024;
+    const QPointer<QNetworkReply> reply(boundReply(m_network->get(request), maxStatsBytes, 20'000));
+    const auto dispose = qScopeGuard([reply] { if (reply) reply->deleteLater(); });
+    if (cancel) cancel->watch(reply.data());
+    co_await qCoro(reply.data()).waitForFinished();
+    if (!owner || !reply) throw Cancelled();
+    throwIfCancelled(cancel);
 
     const int status = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
-    const QByteArray data = reply->readAll();
+    if (replyLimit(*reply, maxStatsBytes) != ReplyLimit::None) {
+        throw StatsFmError(StatsFmError::Kind::Network, QStringLiteral("The stats.fm response exceeded its limit."));
+    }
+    const QByteArray data = reply->read(maxStatsBytes + 1);
     if (status == 0) {
         throw StatsFmError(StatsFmError::Kind::Network,
-                           QStringLiteral("Could not reach stats.fm: %1").arg(reply->errorString()));
+                           QStringLiteral("Could not reach stats.fm."));
     }
     if (status == 404) {
         throw StatsFmError(StatsFmError::Kind::NotFound, QStringLiteral("stats.fm has no user by that name."));
@@ -152,9 +169,9 @@ QCoro::Task<QJsonValue> StatsFmClient::get(QString path, QUrlQuery query)
                                                       : object.value(QStringLiteral("items"));
 }
 
-QCoro::Task<StatsFmProfile> StatsFmClient::profile(QString username)
+QCoro::Task<StatsFmProfile> StatsFmClient::profile(QString username, CancelToken cancel)
 {
-    const QJsonObject user = (co_await get(QStringLiteral("/users/%1").arg(username))).toObject();
+    const QJsonObject user = (co_await get(QStringLiteral("/users/%1").arg(username), {}, cancel)).toObject();
     StatsFmProfile profile;
     profile.id = user.value(QStringLiteral("customId")).toString(user.value(QStringLiteral("id")).toString());
     profile.displayName = user.value(QStringLiteral("displayName")).toString(profile.id);
@@ -166,24 +183,29 @@ QCoro::Task<StatsFmProfile> StatsFmClient::profile(QString username)
     co_return profile;
 }
 
-QCoro::Task<StatsSnapshot> StatsFmClient::snapshot(QString username, StatsPeriod period, bool isPlus)
+QCoro::Task<StatsSnapshot> StatsFmClient::snapshot(QString username, StatsPeriod period, bool isPlus, CancelToken cancel)
 {
+    const QPointer<StatsFmClient> owner(this);
+    const auto fetch = [owner, &cancel](QString path, QUrlQuery query) {
+        if (!owner) throw Cancelled();
+        return owner->get(std::move(path), std::move(query), cancel);
+    };
     const QString user = QStringLiteral("/users/%1").arg(username);
     const QUrlQuery range {{QStringLiteral("range"), rangeName(period)}};
     QUrlQuery top = range;
     top.addQueryItem(QStringLiteral("limit"), QString::number(50));
 
     // started together; each is awaited in turn
-    auto tracksTask = get(user + QStringLiteral("/top/tracks"), top);
-    auto artistsTask = get(user + QStringLiteral("/top/artists"), top);
-    auto genresTask = get(user + QStringLiteral("/top/genres"), top);
-    auto statsTask = get(user + QStringLiteral("/streams/stats"), range);
-    auto recentTask = get(user + QStringLiteral("/streams/recent"), QUrlQuery {{QStringLiteral("limit"), QStringLiteral("20")}});
+    auto tracksTask = fetch(user + QStringLiteral("/top/tracks"), top);
+    auto artistsTask = fetch(user + QStringLiteral("/top/artists"), top);
+    auto genresTask = fetch(user + QStringLiteral("/top/genres"), top);
+    auto statsTask = fetch(user + QStringLiteral("/streams/stats"), range);
+    auto recentTask = fetch(user + QStringLiteral("/streams/recent"), QUrlQuery {{QStringLiteral("limit"), QStringLiteral("20")}});
     // days and hours are grouped by the time zone given, and refused without one
     QUrlQuery dated = range;
     dated.addQueryItem(QStringLiteral("timeZone"), timeZoneName());
-    auto datesTask = get(user + QStringLiteral("/streams/stats/dates"), dated);
-    auto daysTask = get(user + QStringLiteral("/streams/stats/per-day"),
+    auto datesTask = fetch(user + QStringLiteral("/streams/stats/dates"), dated);
+    auto daysTask = fetch(user + QStringLiteral("/streams/stats/per-day"),
                         QUrlQuery {{QStringLiteral("range"), QStringLiteral("lifetime")},
                                    {QStringLiteral("timeZone"), timeZoneName()}});
 
@@ -218,7 +240,7 @@ QCoro::Task<StatsSnapshot> StatsFmClient::snapshot(QString username, StatsPeriod
     if (isPlus) {
         try {
             QList<StatEntry> albums;
-            for (const QJsonValue &item : (co_await get(user + QStringLiteral("/top/albums"), top)).toArray()) {
+            for (const QJsonValue &item : (co_await fetch(user + QStringLiteral("/top/albums"), top)).toArray()) {
                 if (StatEntry entry = album(item.toObject()); !entry.name.isEmpty()) albums.append(entry);
             }
             snapshot.topAlbums = albums;
@@ -232,9 +254,12 @@ QCoro::Task<StatsSnapshot> StatsFmClient::snapshot(QString username, StatsPeriod
     // without plus the top lists come without counts: each place's own
     // stats have them, asked for a few at a time
     const QString rangeText = rangeName(period);
-    co_await fillCounts(user, QStringLiteral("tracks"), &snapshot.topTracks, rangeText);
-    co_await fillCounts(user, QStringLiteral("artists"), &snapshot.topArtists, rangeText);
-    co_await fillCounts(user, QStringLiteral("albums"), &snapshot.topAlbums, rangeText);
+    if (!owner) throw Cancelled();
+    co_await fillCounts(user, QStringLiteral("tracks"), &snapshot.topTracks, rangeText, cancel);
+    if (!owner) throw Cancelled();
+    co_await fillCounts(user, QStringLiteral("artists"), &snapshot.topArtists, rangeText, cancel);
+    if (!owner) throw Cancelled();
+    co_await fillCounts(user, QStringLiteral("albums"), &snapshot.topAlbums, rangeText, cancel);
     if (!isPlus) {
         std::stable_sort(snapshot.topAlbums.begin(), snapshot.topAlbums.end(),
                          [](const StatEntry &a, const StatEntry &b) { return a.plays > b.plays; });
@@ -251,7 +276,7 @@ QCoro::Task<StatsSnapshot> StatsFmClient::snapshot(QString username, StatsPeriod
     co_return snapshot;
 }
 
-QCoro::Task<> StatsFmClient::fillCounts(QString user, QString kind, QList<StatEntry> *entries, QString range)
+QCoro::Task<> StatsFmClient::fillCounts(QString user, QString kind, QList<StatEntry> *entries, QString range, CancelToken cancel)
 {
     constexpr qsizetype kAtOnce = 6;
     constexpr qint64 kFreshSeconds = 10 * 60;
@@ -281,7 +306,7 @@ QCoro::Task<> StatsFmClient::fillCounts(QString user, QString kind, QList<StatEn
         std::vector<QCoro::Task<QJsonValue>> batch;
         for (qsizetype at = start; at < end; ++at) {
             const StatEntry &entry = entries->at(missing.at(at));
-            batch.push_back(get(user + QStringLiteral("/streams/%1/%2/stats").arg(kind).arg(entry.statsFmId), query));
+            batch.push_back(get(user + QStringLiteral("/streams/%1/%2/stats").arg(kind).arg(entry.statsFmId), query, cancel));
         }
         // every one awaited to the end, so none is left running unowned
         bool busy = false;

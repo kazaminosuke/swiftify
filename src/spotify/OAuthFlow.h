@@ -19,6 +19,8 @@
 #pragma once
 
 #include <QDateTime>
+#include <QSet>
+#include <QTimer>
 #include <QObject>
 #include <QStringList>
 #include <QTcpServer>
@@ -26,6 +28,7 @@
 #include <QCoroTask>
 
 class QNetworkAccessManager;
+class QNetworkReply;
 class QTcpSocket;
 
 namespace swiftify {
@@ -73,6 +76,7 @@ public:
 signals:
     /// the browser reached the redirect. emitted once per login.
     void callbackReceived(const QUrl &url);
+    void authorizationTimedOut();
 
 private:
     void acceptConnection();
@@ -83,6 +87,10 @@ private:
 
     QNetworkAccessManager *m_network;
     QTcpServer m_server;
+    QTimer m_loginDeadline;
+    QSet<QTcpSocket *> m_sockets;
+    QSet<QNetworkReply *> m_replies;
+    quint64 m_generation = 0;
     QString m_codeVerifier;
     QString m_expectedState;
     bool m_receivedCallback = false;

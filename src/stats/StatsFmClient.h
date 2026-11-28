@@ -18,11 +18,14 @@
 
 #pragma once
 
+#include "core/Async.h"
+
 #include "stats/StatsTypes.h"
 
 #include <QCoroTask>
 #include <QHash>
 #include <QJsonValue>
+#include <QObject>
 #include <QString>
 #include <QUrlQuery>
 
@@ -62,7 +65,7 @@ private:
 
 /// stats.fm's public api, read with nothing but the username: a public
 /// profile's stats are open to anyone, as on the website
-class StatsFmClient {
+class StatsFmClient : public QObject {
 public:
     explicit StatsFmClient(QNetworkAccessManager *network);
 
@@ -76,9 +79,9 @@ public:
     /// one, when stats.fm leaves them out
     static constexpr int kCountedPlaces = 25;
 
-    QCoro::Task<StatsFmProfile> profile(QString username);
+    QCoro::Task<StatsFmProfile> profile(QString username, CancelToken cancel = {});
     /// everything the stats page shows for `period`
-    QCoro::Task<StatsSnapshot> snapshot(QString username, StatsPeriod period, bool isPlus);
+    QCoro::Task<StatsSnapshot> snapshot(QString username, StatsPeriod period, bool isPlus, CancelToken cancel = {});
 
     // --- the parts of a reply, public for the tests ---------------------------------
     static StatEntry track(const QJsonObject &entry);
@@ -97,10 +100,10 @@ public:
     static void readCounts(const QJsonObject &stats, StatEntry &entry);
 
 private:
-    QCoro::Task<QJsonValue> get(QString path, QUrlQuery query = {});
+    QCoro::Task<QJsonValue> get(QString path, QUrlQuery query, CancelToken cancel);
     /// asks for the counts stats.fm left out of the first places of
     /// `entries`, `kind` being "tracks", "artists" or "albums"
-    QCoro::Task<> fillCounts(QString user, QString kind, QList<StatEntry> *entries, QString range);
+    QCoro::Task<> fillCounts(QString user, QString kind, QList<StatEntry> *entries, QString range, CancelToken cancel);
 
     struct Counts {
         int plays = 0;
@@ -109,6 +112,7 @@ private:
     };
 
     QNetworkAccessManager *m_network;
+    int m_activeRequests = 0;
     /// counts asked for, by kind, id and range: going back to a period, or
     /// refreshing soon after, asks again only for what has gone stale
     QHash<QString, Counts> m_counts;

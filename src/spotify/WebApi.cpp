@@ -17,6 +17,7 @@
  */
 
 #include "spotify/WebApi.h"
+#include "network/BoundedReply.h"
 
 #include "spotify/SpotifyError.h"
 #include "spotify/SpotifyJson.h"
@@ -25,11 +26,13 @@
 #include <QJsonObject>
 #include <QNetworkAccessManager>
 #include <QNetworkReply>
+#include <QScopeGuard>
 #include <QSet>
 #include <QCoroNetworkReply>
 #include <QCoroTimer>
 
 #include <chrono>
+#include <climits>
 #include <exception>
 #include <memory>
 #include <vector>
@@ -50,6 +53,11 @@ WebApi::WebApi(QNetworkAccessManager *network)
 {
 }
 
+WebApi::~WebApi()
+{
+    cancelRequests();
+}
+
 QUrl WebApi::apiUrl(const QString &path, const QUrlQuery &query)
 {
     QUrl url;
@@ -62,72 +70,107 @@ QUrl WebApi::apiUrl(const QString &path, const QUrlQuery &query)
     return url;
 }
 
+namespace {
+constexpr qint64 maxApiBytes = 4 * 1024 * 1024;
+constexpr int maxPages = 200;
+constexpr int maxPageItems = 50;
+constexpr int maxInFlight = 8;
+constexpr int maxPaginationMs = 180'000;
+}
+
+void WebApi::cancelRequests()
+{
+    ++m_generation;
+    QList<QPointer<QNetworkReply>> replies;
+    for (auto *reply : std::as_const(m_replies)) replies.append(reply);
+    for (const auto &reply : replies) {
+        if (reply && !reply->isFinished()) reply->abort();
+    }
+}
+
 QCoro::Task<QByteArray> WebApi::requestData(QUrl url, QByteArray method, QString accessToken,
-                                            QByteArray body, QByteArray contentType)
+                                            QByteArray body, QByteArray contentType, CancelToken cancel, int totalMs)
 {
 #ifdef SWIFTIFY_HAS_SPOTIFY
-    if (url.scheme() != QLatin1StringView("https") || url.host() != QLatin1StringView("api.spotify.com")) {
+    throwIfCancelled(cancel);
+    if (url.scheme() != QLatin1StringView("https") || url.host() != QLatin1StringView("api.spotify.com")
+        || url.port(443) != 443 || !url.userInfo().isEmpty() || url.hasFragment()
+        || !url.path().startsWith(QLatin1StringView("/v1/")) || url.toEncoded().size() > 8192) {
         throw SpotifyError(SpotifyError::Kind::InvalidUrl, QStringLiteral("Spotify returned an invalid API URL."));
+    }
+    if (!m_backoff.hasExpired()) {
+        const int seconds = int(qMin(qint64(INT_MAX), (m_backoff.remainingTime() + 999) / 1000));
+        throw SpotifyError(SpotifyError::Kind::RateLimited, QStringLiteral("Spotify is limiting requests. Try again later."),
+                           seconds);
+    }
+    if (m_replies.size() >= maxInFlight) {
+        throw SpotifyError::requestFailed(QStringLiteral("Too many Spotify requests are in progress."));
     }
 
     QNetworkRequest request(url);
+    privateRequest(request);
     request.setRawHeader("Authorization", "Bearer " + accessToken.toUtf8());
-    request.setTransferTimeout(30'000);
+    request.setTransferTimeout(20'000);
     if (!body.isEmpty() || !contentType.isEmpty()) {
         request.setHeader(QNetworkRequest::ContentTypeHeader, contentType.isEmpty() ? QByteArray("application/json") : contentType);
     }
 
-    std::unique_ptr<QNetworkReply> reply(m_network->sendCustomRequest(request, method, body));
-    co_await qCoro(reply.get()).waitForFinished();
+    const auto generation = m_generation;
+    auto *pending = boundReply(m_network->sendCustomRequest(request, method, body), maxApiBytes, totalMs);
+    // QCoro can resume after the reply's manager and the API owner are gone.
+    const QPointer<QNetworkReply> reply(pending);
+    const QPointer<WebApi> owner(this);
+    m_replies.insert(pending);
+    connect(pending, &QObject::destroyed, this, [this, pending] { m_replies.remove(pending); });
+    if (cancel) cancel->watch(pending);
+    const auto retire = qScopeGuard([owner, reply] {
+        if (!reply) return;
+        if (owner) owner->m_replies.remove(reply.data());
+        reply->deleteLater();
+    });
+    co_await qCoro(pending).waitForFinished();
+    if (!owner || !reply || generation != m_generation) throw Cancelled();
+    throwIfCancelled(cancel);
 
-    const QByteArray data = reply->readAll();
     const int status = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
-    if (status == 0) {
-        throw SpotifyError::requestFailed(reply->errorString());
-    }
-    if (status >= 200 && status < 300) {
-        co_return data;
-    }
-
-    QString message = QJsonDocument::fromJson(data).object().value(QStringLiteral("error")).toObject()
-                          .value(QStringLiteral("message")).toString();
-    if (message.isEmpty()) {
-        message = QStringLiteral("HTTP %1").arg(status);
-    }
     switch (status) {
     case 401:
-        throw SpotifyError(SpotifyError::Kind::Unauthorized,
-                           QStringLiteral("Spotify API authorization failed: %1").arg(message));
+        throw SpotifyError(SpotifyError::Kind::Unauthorized, QStringLiteral("Spotify API authorization failed."));
     case 403:
-        // spotify's own text here is usually the bare word "forbidden", which
-        // says nothing about which permission was missing.
-        throw SpotifyError(SpotifyError::Kind::Forbidden,
-                           QStringLiteral("Spotify refused this change: %1").arg(message));
+        throw SpotifyError(SpotifyError::Kind::Forbidden, QStringLiteral("Spotify refused the request."));
     case 429: {
-        bool ok = false;
-        const int retryAfter = reply->rawHeader("Retry-After").toInt(&ok);
-        throw SpotifyError(SpotifyError::Kind::RateLimited,
-                           ok ? QStringLiteral("Spotify rate limit exceeded. Try again in %1 seconds.").arg(retryAfter)
-                              : QStringLiteral("Spotify rate limit exceeded. Try again shortly."),
-                           ok ? retryAfter : -1);
+        const qint64 delay = qMax(qint64(1000), retryAfterMs(reply->rawHeader("Retry-After")).value_or(1000));
+        m_backoff.setRemainingTime(qMax(delay, m_backoff.remainingTime()), Qt::PreciseTimer);
+        throw SpotifyError(SpotifyError::Kind::RateLimited, QStringLiteral("Spotify is limiting requests. Try again later."),
+                           int(qMin(qint64(INT_MAX), (delay + 999) / 1000)));
     }
     default:
-        throw SpotifyError::requestFailed(message);
+        break;
     }
+    if (replyLimit(*reply, maxApiBytes) != ReplyLimit::None) {
+        throw SpotifyError::requestFailed(QStringLiteral("The Spotify response exceeded the size or time limit."));
+    }
+    if (status < 200 || status >= 300 || reply->error() != QNetworkReply::NoError) {
+        throw SpotifyError::requestFailed(status == 0 ? QStringLiteral("Could not reach Spotify.")
+                                                       : QStringLiteral("HTTP %1").arg(status));
+    }
+    co_return reply->read(maxApiBytes + 1);
 #else
     Q_UNUSED(url);
     Q_UNUSED(method);
     Q_UNUSED(accessToken);
     Q_UNUSED(body);
     Q_UNUSED(contentType);
+    Q_UNUSED(cancel);
+    Q_UNUSED(totalMs);
     throw SpotifyError(SpotifyError::Kind::Session, QStringLiteral("Spotify support is disabled."));
 #endif
 }
 
 QCoro::Task<QJsonDocument> WebApi::requestJson(QUrl url, QByteArray method, QString accessToken,
-                                               QByteArray body, QByteArray contentType)
+                                               QByteArray body, QByteArray contentType, CancelToken cancel, int totalMs)
 {
-    const QByteArray data = co_await requestData(url, method, accessToken, body, contentType);
+    const QByteArray data = co_await requestData(url, method, accessToken, body, contentType, cancel, totalMs);
     QJsonParseError error;
     QJsonDocument document = QJsonDocument::fromJson(data, &error);
     if (error.error != QJsonParseError::NoError) {
@@ -137,28 +180,37 @@ QCoro::Task<QJsonDocument> WebApi::requestJson(QUrl url, QByteArray method, QStr
 }
 
 QCoro::Task<> WebApi::collectPages(QUrl firstUrl, QString accessToken,
-                                   std::function<void(const QJsonObject &)> onPage)
+                                   std::function<void(const QJsonObject &)> onPage, CancelToken cancel)
 {
+    const QDeadlineTimer deadline(maxPaginationMs);
     QSet<QUrl> visited;
     QUrl next = firstUrl;
     while (next.isValid() && !next.isEmpty()) {
         if (visited.contains(next)) {
             throw SpotifyError::invalidData(QStringLiteral("Spotify repeated a page URL."));
         }
+        if (visited.size() >= maxPages) throw SpotifyError::invalidData(QStringLiteral("Spotify returned too many pages."));
         visited.insert(next);
-        const QJsonObject page = (co_await requestJson(next, "GET", accessToken)).object();
+        const QJsonObject page = co_await requestPage(next, accessToken, cancel, deadline);
+        if (page.value(QStringLiteral("items")).toArray().size() > maxPageItems) {
+            throw SpotifyError::invalidData(QStringLiteral("Spotify returned too many items in a page."));
+        }
         onPage(page);
         const QJsonValue nextValue = page.value(QStringLiteral("next"));
         next = nextValue.isString() ? QUrl(nextValue.toString()) : QUrl();
     }
 }
 
-QCoro::Task<QJsonObject> WebApi::requestPage(QUrl url, QString accessToken)
+QCoro::Task<QJsonObject> WebApi::requestPage(QUrl url, QString accessToken, CancelToken cancel, QDeadlineTimer deadline)
 {
+    const QPointer<WebApi> owner(this);
+    const auto generation = m_generation;
+    if (deadline.hasExpired()) throw SpotifyError::requestFailed(QStringLiteral("Spotify pagination timed out."));
+    const auto requestLimit = [deadline] { return int(qBound(qint64(1), deadline.remainingTime(), qint64(30'000))); };
     // set in the handler and waited out after it: there is no co_await in a catch
     int retryAfter = 0;
     try {
-        co_return (co_await requestJson(url, "GET", accessToken)).object();
+        co_return (co_await requestJson(url, "GET", accessToken, {}, {}, cancel, requestLimit())).object();
     } catch (const SpotifyError &error) {
         // a short wait is worth it; a long one is the caller's to report
         if (error.kind() != SpotifyError::Kind::RateLimited || error.retryAfterSeconds() > 10) {
@@ -166,12 +218,17 @@ QCoro::Task<QJsonObject> WebApi::requestPage(QUrl url, QString accessToken)
         }
         retryAfter = std::max(1, error.retryAfterSeconds());
     }
+    if (deadline.remainingTime() <= retryAfter * 1000) {
+        throw SpotifyError::requestFailed(QStringLiteral("Spotify pagination timed out."));
+    }
     co_await QCoro::sleepFor(std::chrono::seconds(retryAfter));
-    co_return (co_await requestJson(url, "GET", accessToken)).object();
+    if (!owner || generation != m_generation) throw Cancelled();
+    throwIfCancelled(cancel);
+    co_return (co_await requestJson(url, "GET", accessToken, {}, {}, cancel, requestLimit())).object();
 }
 
 QCoro::Task<> WebApi::collectOffsetPages(QString path, QUrlQuery query, QString accessToken,
-                                         std::function<void(const QJsonObject &)> onPage)
+                                         std::function<void(const QJsonObject &)> onPage, CancelToken cancel)
 {
     constexpr int kPageSize = 50;
     constexpr int kAtOnce = 4;
@@ -183,17 +240,21 @@ QCoro::Task<> WebApi::collectOffsetPages(QString path, QUrlQuery query, QString 
         return apiUrl(path, paged);
     };
 
+    const QDeadlineTimer deadline(maxPaginationMs);
     const QUrl firstUrl = pageUrl(0);
-    const QJsonObject first = co_await requestPage(firstUrl, accessToken);
-    onPage(first);
+    const QJsonObject first = co_await requestPage(firstUrl, accessToken, cancel, deadline);
     const int total = first.value(QStringLiteral("total")).toInt();
+    if (total < 0 || total > kPageSize * maxPages || first.value(QStringLiteral("items")).toArray().size() > maxPageItems) {
+        throw SpotifyError::invalidData(QStringLiteral("Spotify returned too many items."));
+    }
+    onPage(first);
 
     for (int start = kPageSize; start < total; start += kPageSize * kAtOnce) {
         // started together, then each awaited in turn, every one to the end
         // even when one fails: a request is not left running unowned
         std::vector<QCoro::Task<QJsonObject>> batch;
         for (int offset = start; offset < std::min(total, start + kPageSize * kAtOnce); offset += kPageSize) {
-            batch.push_back(requestPage(pageUrl(offset), accessToken));
+            batch.push_back(requestPage(pageUrl(offset), accessToken, cancel, deadline));
         }
         std::vector<QJsonObject> pages;
         std::exception_ptr failure;
@@ -210,6 +271,9 @@ QCoro::Task<> WebApi::collectOffsetPages(QString path, QUrlQuery query, QString 
             std::rethrow_exception(failure);
         }
         for (const QJsonObject &page : pages) {
+            if (page.value(QStringLiteral("items")).toArray().size() > maxPageItems) {
+                throw SpotifyError::invalidData(QStringLiteral("Spotify returned too many items in a page."));
+            }
             onPage(page);
         }
     }
@@ -259,14 +323,14 @@ void appendWrappedTracks(QList<Song> &songs, const QJsonObject &page)
 
 } // namespace
 
-QCoro::Task<QList<Song>> WebApi::playlistSongs(QString playlistId, QString accessToken)
+QCoro::Task<QList<Song>> WebApi::playlistSongs(QString playlistId, QString accessToken, CancelToken cancel)
 {
     QList<Song> result;
     const QUrlQuery query {{QStringLiteral("limit"), QStringLiteral("50")},
                            {QStringLiteral("additional_types"), QStringLiteral("track")},
                            kMarket};
     co_await collectOffsetPages(QStringLiteral("/v1/playlists/%1/items").arg(playlistId), query, accessToken,
-                                [&result](const QJsonObject &page) { appendWrappedTracks(result, page); });
+                                [&result](const QJsonObject &page) { appendWrappedTracks(result, page); }, cancel);
     co_return result;
 }
 
@@ -299,7 +363,7 @@ QCoro::Task<QList<Song>> WebApi::recentlyPlayed(QString accessToken)
     co_return result;
 }
 
-QCoro::Task<SearchResults> WebApi::search(QString query, QString accessToken)
+QCoro::Task<SearchResults> WebApi::search(QString query, QString accessToken, CancelToken cancel)
 {
     const QUrlQuery requestQuery = QUrlQuery {{QStringLiteral("q"), query},
                                                        {QStringLiteral("type"), QStringLiteral("track,album,artist,playlist")},
@@ -307,7 +371,7 @@ QCoro::Task<SearchResults> WebApi::search(QString query, QString accessToken)
                                                        kMarket};
     const QJsonObject response = (co_await requestJson(
         apiUrl(QStringLiteral("/v1/search"), requestQuery),
-        "GET", accessToken)).object();
+        "GET", accessToken, {}, {}, cancel)).object();
 
     const auto items = [&response](const char *key) {
         return response.value(QLatin1StringView(key)).toObject().value(QStringLiteral("items")).toArray();
@@ -331,9 +395,9 @@ QCoro::Task<SearchResults> WebApi::search(QString query, QString accessToken)
     co_return results;
 }
 
-QCoro::Task<Song> WebApi::song(QString trackId, QString accessToken)
+QCoro::Task<Song> WebApi::song(QString trackId, QString accessToken, CancelToken cancel)
 {
-    const QJsonDocument document = co_await requestJson(apiUrl(QStringLiteral("/v1/tracks/%1").arg(trackId), QUrlQuery {kMarket}), "GET", accessToken);
+    const QJsonDocument document = co_await requestJson(apiUrl(QStringLiteral("/v1/tracks/%1").arg(trackId), QUrlQuery {kMarket}), "GET", accessToken, {}, {}, cancel);
     const auto song = json::track(document.object());
     if (!song) {
         throw SpotifyError::invalidData(QStringLiteral("Spotify returned an unsupported track."));
@@ -341,9 +405,9 @@ QCoro::Task<Song> WebApi::song(QString trackId, QString accessToken)
     co_return *song;
 }
 
-QCoro::Task<Album> WebApi::album(QString albumId, QString accessToken)
+QCoro::Task<Album> WebApi::album(QString albumId, QString accessToken, CancelToken cancel)
 {
-    const QJsonDocument document = co_await requestJson(apiUrl(QStringLiteral("/v1/albums/%1").arg(albumId), QUrlQuery {kMarket}), "GET", accessToken);
+    const QJsonDocument document = co_await requestJson(apiUrl(QStringLiteral("/v1/albums/%1").arg(albumId), QUrlQuery {kMarket}), "GET", accessToken, {}, {}, cancel);
     const auto album = json::album(document.object());
     if (!album) {
         throw SpotifyError::invalidData(QStringLiteral("Spotify returned an unsupported album."));
@@ -351,9 +415,9 @@ QCoro::Task<Album> WebApi::album(QString albumId, QString accessToken)
     co_return *album;
 }
 
-QCoro::Task<Artist> WebApi::artist(QString artistId, QString accessToken)
+QCoro::Task<Artist> WebApi::artist(QString artistId, QString accessToken, CancelToken cancel)
 {
-    const QJsonDocument document = co_await requestJson(apiUrl(QStringLiteral("/v1/artists/%1").arg(artistId), QUrlQuery {kMarket}), "GET", accessToken);
+    const QJsonDocument document = co_await requestJson(apiUrl(QStringLiteral("/v1/artists/%1").arg(artistId), QUrlQuery {kMarket}), "GET", accessToken, {}, {}, cancel);
     const auto artist = json::artist(document.object());
     if (!artist) {
         throw SpotifyError::invalidData(QStringLiteral("Spotify returned an unsupported artist."));
@@ -361,14 +425,14 @@ QCoro::Task<Artist> WebApi::artist(QString artistId, QString accessToken)
     co_return *artist;
 }
 
-QCoro::Task<Playlist> WebApi::playlist(QString playlistId, QString accessToken)
+QCoro::Task<Playlist> WebApi::playlist(QString playlistId, QString accessToken, CancelToken cancel)
 {
     // json::playlist needs both "items" and "tracks"
     const QUrlQuery query {{QStringLiteral("fields"),
                             QStringLiteral("id,name,description,images,uri,public,collaborative,"
                                            "owner(id,display_name),items(total),tracks(total)")},
                            kMarket};
-    const QJsonDocument document = co_await requestJson(apiUrl(QStringLiteral("/v1/playlists/%1").arg(playlistId), query), "GET", accessToken);
+    const QJsonDocument document = co_await requestJson(apiUrl(QStringLiteral("/v1/playlists/%1").arg(playlistId), query), "GET", accessToken, {}, {}, cancel);
     const Playlist playlist = json::playlist(document.object());
     if (playlist.id.isEmpty()) {
         throw SpotifyError::invalidData(QStringLiteral("Spotify returned an unsupported playlist."));
@@ -376,7 +440,7 @@ QCoro::Task<Playlist> WebApi::playlist(QString playlistId, QString accessToken)
     co_return playlist;
 }
 
-QCoro::Task<QList<Song>> WebApi::albumSongs(Album album, QString accessToken)
+QCoro::Task<QList<Song>> WebApi::albumSongs(Album album, QString accessToken, CancelToken cancel)
 {
     QList<Song> result;
     const QUrlQuery requestQuery = QUrlQuery {{QStringLiteral("limit"), QStringLiteral("50")}, kMarket};
@@ -385,11 +449,11 @@ QCoro::Task<QList<Song>> WebApi::albumSongs(Album album, QString accessToken)
         for (const QJsonValue &value : page.value(QStringLiteral("items")).toArray()) {
             if (const auto song = json::track(value.toObject(), album)) result.append(*song);
         }
-    });
+    }, cancel);
     co_return result;
 }
 
-QCoro::Task<QList<Album>> WebApi::artistAlbums(Artist artist, QString accessToken)
+QCoro::Task<QList<Album>> WebApi::artistAlbums(Artist artist, QString accessToken, CancelToken cancel)
 {
     QList<Album> result;
     QSet<QString> seen;
@@ -404,7 +468,7 @@ QCoro::Task<QList<Album>> WebApi::artistAlbums(Artist artist, QString accessToke
                 result.append(*album);
             }
         }
-    });
+    }, cancel);
     co_return result;
 }
 

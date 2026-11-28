@@ -123,6 +123,27 @@ class LocalTest : public QObject {
     Q_OBJECT
 
 private slots:
+    void invalidPlaylistFileNamesAreIgnored()
+    {
+        QTemporaryDir storage;
+        QVERIFY(storage.isValid());
+        const auto path = storage.filePath(QStringLiteral("local-playlists.json"));
+        QFile manifest(path);
+        QVERIFY(manifest.open(QIODevice::WriteOnly));
+        const auto json = QByteArrayLiteral(R"({"version":1,"playlists":[
+            {"id":"local:valid","name":"Test","cover":"invalid/name.jpg","songs":[]},
+            {"id":"local:invalid/name","name":"Invalid","songs":[]}
+        ]})");
+        QCOMPARE(manifest.write(json), json.size());
+        manifest.close();
+
+        Settings settings(storage.filePath(QStringLiteral("settings.ini")));
+        LocalLibrary library(&settings, nullptr, storage.path());
+        QVERIFY(library.playlist(QStringLiteral("local:valid")).isValid());
+        QVERIFY(library.playlist(QStringLiteral("local:valid")).artworkUrl.isEmpty());
+        QVERIFY(!library.playlist(QStringLiteral("local:invalid/name")).isValid());
+    }
+
     void aFolderIsSearchedAndEachSongTakesItsOwnTags()
     {
         QTemporaryDir music;

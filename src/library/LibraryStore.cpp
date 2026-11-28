@@ -31,6 +31,7 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QLoggingCategory>
+#include <QPointer>
 #include <QQmlEngine>
 #include <QCoroTimer>
 
@@ -171,6 +172,7 @@ LibraryStore::LibraryStore(SpotifySession *session, Settings *settings, ErrorCen
 
 LibraryStore::~LibraryStore()
 {
+    m_session->setInitialLibraryLoader({});
     m_songLoad.cancel();
     m_artistLoad.cancel();
     m_search.cancel();
@@ -676,7 +678,7 @@ QCoro::Task<> LibraryStore::runPlaylistLoad(Playlist playlist, CancelToken token
         QList<Song> loaded;
         if (playlist.canModify(m_profile.id)) {
             loaded = co_await m_session->withLibraryAccessToken<QList<Song>>(
-                [this, id = playlist.id](QString accessToken) { return m_session->webApi().playlistSongs(id, accessToken); });
+                [this, id = playlist.id, token](QString accessToken) { return m_session->webApi().playlistSongs(id, accessToken, token); });
         } else {
             // the web api only gives the name and cover of a playlist someone
             // else made, the session still reads its songs
@@ -694,8 +696,9 @@ QCoro::Task<> LibraryStore::runPlaylistLoad(Playlist playlist, CancelToken token
         m_songLoad.finish(token);
         co_await loadSavedStatuses(loaded);
     } catch (const Cancelled &) {
+        co_return;
     } catch (const SpotifyError &error) {
-        if (m_destination == target && !isCancelled(token)) {
+        if (!isCancelled(token) && m_destination == target) {
             setLoading(m_loadingSongs, false);
             reportError(QStringLiteral("Loading songs from \"%1\"").arg(playlist.name), error.message());
         }
@@ -721,7 +724,7 @@ QCoro::Task<> LibraryStore::runAlbumLoad(Album album, CancelToken token)
     const Destination target {Page::Album, {}, album};
     try {
         const QList<Song> loaded = co_await m_session->withLibraryAccessToken<QList<Song>>(
-            [this, album](QString accessToken) { return m_session->webApi().albumSongs(album, accessToken); });
+            [this, album, token](QString accessToken) { return m_session->webApi().albumSongs(album, accessToken, token); });
         throwIfCancelled(token);
         if (!(m_destination == target)) {
             co_return;
@@ -732,8 +735,9 @@ QCoro::Task<> LibraryStore::runAlbumLoad(Album album, CancelToken token)
         m_songLoad.finish(token);
         co_await loadSavedStatuses(loaded);
     } catch (const Cancelled &) {
+        co_return;
     } catch (const SpotifyError &error) {
-        if (m_destination == target && !isCancelled(token)) {
+        if (!isCancelled(token) && m_destination == target) {
             setLoading(m_loadingSongs, false);
             reportError(QStringLiteral("Loading \"%1\"").arg(album.name), error.message());
         }
@@ -785,7 +789,7 @@ QCoro::Task<> LibraryStore::runArtistLoad(Artist artist, CancelToken token)
         }
 
         const QList<Album> albums = co_await m_session->withLibraryAccessToken<QList<Album>>(
-            [this, artist](QString accessToken) { return m_session->webApi().artistAlbums(artist, accessToken); });
+            [this, artist, token](QString accessToken) { return m_session->webApi().artistAlbums(artist, accessToken, token); });
         throwIfCancelled(token);
         if (!(m_destination == target)) {
             co_return;
@@ -794,8 +798,9 @@ QCoro::Task<> LibraryStore::runArtistLoad(Artist artist, CancelToken token)
         m_openedArtists.insert(artist.id, {m_artistTopSongs->songs(), albums});
         setLoading(m_loadingArtist, false);
     } catch (const Cancelled &) {
+        co_return;
     } catch (const SpotifyError &error) {
-        if (m_destination == target && !isCancelled(token)) {
+        if (!isCancelled(token) && m_destination == target) {
             setLoading(m_loadingArtist, false);
             reportError(QStringLiteral("Loading %1").arg(artist.name), error.message());
         }
@@ -852,7 +857,7 @@ QCoro::Task<> LibraryStore::runLinkNavigation(SpotifyLink link, CancelToken toke
         switch (link.kind) {
         case SpotifyLink::Kind::Track: {
             const Song song = co_await m_session->withLibraryAccessToken<Song>(
-                [this, id = link.id](QString accessToken) { return m_session->webApi().song(id, accessToken); });
+                [session = m_session, id = link.id, token](QString accessToken) { return session->webApi().song(id, accessToken, token); });
             throwIfCancelled(token);
             const Album album = song.albumDestination();
             if (!album.isValid()) {
@@ -864,7 +869,7 @@ QCoro::Task<> LibraryStore::runLinkNavigation(SpotifyLink link, CancelToken toke
         }
         case SpotifyLink::Kind::Album: {
             const Album album = co_await m_session->withLibraryAccessToken<Album>(
-                [this, id = link.id](QString accessToken) { return m_session->webApi().album(id, accessToken); });
+                [session = m_session, id = link.id, token](QString accessToken) { return session->webApi().album(id, accessToken, token); });
             throwIfCancelled(token);
             setLoading(m_searching, false);
             selectAlbum(album);
@@ -872,7 +877,7 @@ QCoro::Task<> LibraryStore::runLinkNavigation(SpotifyLink link, CancelToken toke
         }
         case SpotifyLink::Kind::Playlist: {
             const Playlist playlist = co_await m_session->withLibraryAccessToken<Playlist>(
-                [this, id = link.id](QString accessToken) { return m_session->webApi().playlist(id, accessToken); });
+                [session = m_session, id = link.id, token](QString accessToken) { return session->webApi().playlist(id, accessToken, token); });
             throwIfCancelled(token);
             setLoading(m_searching, false);
             selectPlaylist(playlist);
@@ -880,7 +885,7 @@ QCoro::Task<> LibraryStore::runLinkNavigation(SpotifyLink link, CancelToken toke
         }
         case SpotifyLink::Kind::Artist: {
             const Artist artist = co_await m_session->withLibraryAccessToken<Artist>(
-                [this, id = link.id](QString accessToken) { return m_session->webApi().artist(id, accessToken); });
+                [session = m_session, id = link.id, token](QString accessToken) { return session->webApi().artist(id, accessToken, token); });
             throwIfCancelled(token);
             setLoading(m_searching, false);
             selectArtist(artist);
@@ -890,6 +895,7 @@ QCoro::Task<> LibraryStore::runLinkNavigation(SpotifyLink link, CancelToken toke
         m_search.finish(token);
         setSearchQuery(QString());
     } catch (const Cancelled &) {
+        co_return;
     } catch (const SpotifyError &error) {
         if (!isCancelled(token)) {
             setLoading(m_searching, false);
@@ -949,7 +955,7 @@ QCoro::Task<> LibraryStore::runSearch(QString query, CancelToken token)
         co_await QCoro::sleepFor(std::chrono::milliseconds(350));
         throwIfCancelled(token);
         const SearchResults results = co_await m_session->withLibraryAccessToken<SearchResults>(
-            [this, query](QString accessToken) { return m_session->webApi().search(query, accessToken); });
+            [session = m_session, query, token](QString accessToken) { return session->webApi().search(query, accessToken, token); });
         throwIfCancelled(token);
         if (m_searchQuery.trimmed() != query) {
             co_return;
@@ -963,6 +969,7 @@ QCoro::Task<> LibraryStore::runSearch(QString query, CancelToken token)
         m_search.finish(token);
         co_await loadSavedStatuses(results.songs);
     } catch (const Cancelled &) {
+        co_return;
     } catch (const SpotifyError &error) {
         if (!isCancelled(token)) {
             setLoading(m_searching, false);
@@ -1063,6 +1070,7 @@ QCoro::Task<> LibraryStore::runToggleSaved(Song song, bool shouldSave, quint64 g
             return m_session->webApi().setSaved(shouldSave, uri, accessToken);
         });
     } catch (const Cancelled &) {
+        co_return;
     } catch (const SpotifyError &error) {
         if (shouldSave) {
             m_savedUris.remove(song.uri);
@@ -1126,13 +1134,15 @@ QCoro::Task<> LibraryStore::loadSavedStatuses(QList<Song> songs)
 
 QCoro::Task<> LibraryStore::loadInitialLibrary()
 {
+    const QPointer<LibraryStore> owner(this);
     if (!m_session->hasLibraryToken()) {
         co_return;
     }
     if (!m_session->libraryNeedsAuthorizationUpgrade()) {
         try {
             const Profile profile = co_await m_session->withLibraryAccessToken<Profile>(
-                [this](QString accessToken) { return m_session->webApi().profile(accessToken); });
+                [session = m_session](QString accessToken) { return session->webApi().profile(accessToken); });
+            if (!owner) co_return;
             setProfile(profile);
         } catch (const Cancelled &) {
             co_return;
@@ -1140,14 +1150,16 @@ QCoro::Task<> LibraryStore::loadInitialLibrary()
             qCWarning(lcLibrary).noquote() << "loading spotify profile:" << error.message();
         }
     }
+    if (!owner) co_return;
     co_await loadPlaylists();
-    if (!m_session->libraryNeedsAuthorizationUpgrade()) {
+    if (owner && !m_session->libraryNeedsAuthorizationUpgrade()) {
         co_await loadHome();
     }
 }
 
 QCoro::Task<> LibraryStore::loadPlaylists()
 {
+    const QPointer<LibraryStore> owner(this);
     if (!m_session->hasLibraryToken() || m_loadingPlaylists) {
         co_return;
     }
@@ -1155,14 +1167,16 @@ QCoro::Task<> LibraryStore::loadPlaylists()
     const quint64 generation = m_session->generation();
     try {
         const QList<Playlist> playlists = co_await m_session->withLibraryAccessToken<QList<Playlist>>(
-            [this](QString accessToken) { return m_session->webApi().playlists(accessToken); });
+            [session = m_session](QString accessToken) { return session->webApi().playlists(accessToken); });
+        if (!owner) co_return;
         setPlaylistList(playlists);
         m_session->setLibraryStatus(QStringLiteral("Connected"));
     } catch (const Cancelled &) {
     } catch (const SpotifyError &error) {
+        if (!owner) co_return;
         reportError(QStringLiteral("Loading playlists"), error.message());
     }
-    if (generation == m_session->generation()) {
+    if (owner && generation == m_session->generation()) {
         setLoading(m_loadingPlaylists, false);
     }
 }
@@ -1174,6 +1188,7 @@ void LibraryStore::retryLoadingPlaylists()
 
 QCoro::Task<> LibraryStore::loadHome()
 {
+    const QPointer<LibraryStore> owner(this);
     if (m_session->libraryNeedsAuthorizationUpgrade() || !m_session->hasLibraryToken() || m_loadingHome) {
         co_return;
     }
@@ -1183,7 +1198,8 @@ QCoro::Task<> LibraryStore::loadHome()
     detach(loadSavedSongTotal());
     try {
         const QList<Song> recent = co_await m_session->withLibraryAccessToken<QList<Song>>(
-            [this](QString accessToken) { return m_session->webApi().recentlyPlayed(accessToken); });
+            [session = m_session](QString accessToken) { return session->webApi().recentlyPlayed(accessToken); });
+        if (!owner) co_return;
         m_recentlyPlayed->setSongs(recent);
         refreshRecommendations();
         m_hasLoadedHome = true;
@@ -1192,13 +1208,14 @@ QCoro::Task<> LibraryStore::loadHome()
     } catch (const SpotifyError &error) {
         qCWarning(lcLibrary).noquote() << "loading recently played songs:" << error.message();
     }
-    if (generation == m_session->generation()) {
+    if (owner && generation == m_session->generation()) {
         setLoading(m_loadingHome, false);
     }
 }
 
 QCoro::Task<> LibraryStore::loadSavedSongs()
 {
+    const QPointer<LibraryStore> owner(this);
     if (m_session->libraryNeedsAuthorizationUpgrade()) {
         m_errors->show(QStringLiteral("Reconnect your library once to enable saved songs and playlist editing."));
         co_return;
@@ -1211,7 +1228,8 @@ QCoro::Task<> LibraryStore::loadSavedSongs()
     const int revision = m_savedStatusRevision;
     try {
         const QList<Song> loaded = co_await m_session->withLibraryAccessToken<QList<Song>>(
-            [this](QString accessToken) { return m_session->webApi().savedSongs(accessToken); });
+            [session = m_session](QString accessToken) { return session->webApi().savedSongs(accessToken); });
+        if (!owner) co_return;
         if (revision == m_savedStatusRevision) {
             QList<Song> merged;
             for (const Song &song : m_savedSongs->songs()) {
@@ -1236,9 +1254,10 @@ QCoro::Task<> LibraryStore::loadSavedSongs()
         }
     } catch (const Cancelled &) {
     } catch (const SpotifyError &error) {
+        if (!owner) co_return;
         reportError(QStringLiteral("Loading saved songs"), error.message());
     }
-    if (generation == m_session->generation()) {
+    if (owner && generation == m_session->generation()) {
         setLoading(m_loadingSavedSongs, false);
     }
 }

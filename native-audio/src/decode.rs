@@ -146,19 +146,23 @@ impl DemuxedSource {
             .as_ref()
             .ok_or(Error::Unsupported("no decoded channels"))?
             .count() as u16;
+        let to_duration = |time: Time| Duration::try_from_secs_f64(time.as_secs_f64()).ok();
         let duration = track
             .duration
             .and_then(|d| time_base.calc_duration(d))
+            .and_then(to_duration)
             .or_else(|| {
-                // WebM puts the playback duration on the Segment, not on
-                // its track. Use it when there is only one media track.
+                // The track frame count already excludes encoder delay and padding.
+                Duration::try_from_secs_f64(track.num_frames? as f64 / f64::from(rate)).ok()
+            })
+            .or_else(|| {
+                // WebM segment duration describes all tracks together.
                 if format.tracks().len() != 1 {
                     return None;
                 }
                 let media = format.media_info();
-                media.time_base?.calc_duration(media.duration?)
-            })
-            .and_then(|time| Duration::try_from_secs_f64(time.as_secs_f64()).ok());
+                to_duration(media.time_base?.calc_duration(media.duration?)?)
+            });
         let mut source = Self {
             track: track.id,
             format,

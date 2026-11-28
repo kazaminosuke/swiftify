@@ -27,12 +27,14 @@
 #include <QLocale>
 #include <QDir>
 #include <QDirIterator>
+#include <QElapsedTimer>
 #include <QFileInfo>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QLoggingCategory>
 #include <QQmlEngine>
 #include <QSaveFile>
+#include <QRegularExpression>
 #include <QSet>
 #include <QThreadPool>
 #include <QUuid>
@@ -53,6 +55,10 @@ LocalLibrary *s_instance = nullptr;
 const QString kSourcesKey = QStringLiteral("localMusicSources");
 constexpr int kCacheVersion = 1;
 constexpr int kPlaylistsVersion = 1;
+constexpr qint64 kMaxPlaylistBytes = 16 * 1024 * 1024;
+constexpr qint64 kMaxCacheBytes = 64 * 1024 * 1024;
+constexpr qsizetype kMaxTracks = 100'000;
+constexpr qint64 kMaxEntriesVisited = 500'000;
 const QString kLocalPrefix = QStringLiteral("local:");
 
 /// what the core's decoder plays (spotify-core's local::AUDIO_EXTENSIONS)
@@ -100,6 +106,53 @@ bool isWithin(const QString &path, const QString &folder)
     return path == folder || path.startsWith(folder.endsWith(u'/') ? folder : folder + u'/');
 }
 
+bool safeLocalPath(const QString &path)
+{
+    return QDir::isAbsolutePath(path) && QDir::cleanPath(path) == path
+        && !path.startsWith(QStringLiteral("//")) && !path.contains(u'\0');
+}
+
+bool isManagedFile(const QString &path, const QString &directory)
+{
+    if (!safeLocalPath(path) || !isWithin(path, directory) || path == directory) return false;
+    const QFileInfo base(directory);
+    const QFileInfo file(path);
+    if (base.isSymLink() || file.isSymLink() || !file.isFile()) return false;
+    const QString root = base.canonicalFilePath();
+    if (root.isEmpty()) return false;
+    // Require the relative layout exactly as generated, including its
+    // parents. A symlink under the store can redirect a recursive removal.
+    return file.canonicalFilePath() == QDir(root).filePath(QDir(directory).relativeFilePath(path));
+}
+
+bool isKeptTrack(const QString &path, const QString &store)
+{
+    if (!isManagedFile(path, store) || !LocalLibrary::isMusicFile(path)) return false;
+    static const QRegularExpression folder(QStringLiteral("\\A[0-9a-f]{12}\\z"));
+    return folder.match(QDir(store).relativeFilePath(path).section(u'/', 0, 0)).hasMatch();
+}
+
+bool safeSongUri(const QString &uri)
+{
+    const QUrl url(uri, QUrl::StrictMode);
+    const QString path = url.toLocalFile();
+    return url.isValid() && url.isLocalFile() && url.host().isEmpty()
+        && !url.hasQuery() && !url.hasFragment() && safeLocalPath(path) && LocalLibrary::isMusicFile(path);
+}
+
+void validateArtwork(QJsonObject &tags, const QString &track, const QString &cache)
+{
+    const QString art = text(tags, "artworkPath");
+    if (art.isEmpty()) return;
+    const QFileInfo image(art);
+    const QString directory = QFileInfo(track).absolutePath();
+    if (image.size() > 32 * 1024 * 1024
+        || (!isManagedFile(art, cache)
+            && (image.absolutePath() != directory || !isManagedFile(art, directory)))) {
+        tags.remove(QStringLiteral("artworkPath"));
+    }
+}
+
 } // namespace
 
 LocalLibrary::LocalLibrary(Settings *settings, QObject *parent, const QString &storageDirectory)
@@ -145,6 +198,7 @@ LocalLibrary::LocalLibrary(Settings *settings, QObject *parent, const QString &s
 
 LocalLibrary::~LocalLibrary()
 {
+    if (m_scanCancellation) m_scanCancellation->store(true);
     if (s_instance == this) {
         s_instance = nullptr;
     }
@@ -242,9 +296,10 @@ void LocalLibrary::rescan()
         return;
     }
     const quint64 generation = ++m_scanGeneration;
+    m_scanCancellation = std::make_shared<std::atomic_bool>(false);
     setScanning(true);
     QtConcurrent::run(QThreadPool::globalInstance(), &LocalLibrary::scan, scanSources(), m_entries, m_artworkDirectory,
-                      m_cachePath)
+                      m_cachePath, m_scanCancellation)
         .then(this, [this, generation](const ScanResult &result) {
             if (generation != m_scanGeneration) {
                 // A playlist acquired new copies while this scan was in
@@ -297,17 +352,23 @@ void LocalLibrary::loadCache()
     if (!file.open(QIODevice::ReadOnly)) {
         return;
     }
-    const QJsonObject root = QJsonDocument::fromJson(file.readAll()).object();
+    const QByteArray data = file.read(kMaxCacheBytes + 1);
+    if (data.size() > kMaxCacheBytes) return;
+    const QJsonObject root = QJsonDocument::fromJson(data).object();
     if (root.value(QStringLiteral("version")).toInt() != kCacheVersion) {
         return;
     }
     const QJsonObject files = root.value(QStringLiteral("files")).toObject();
-    QList<std::pair<QString, QJsonObject>> known;
-    for (auto it = files.begin(); it != files.end(); ++it) {
+    for (auto it = files.begin(); it != files.end() && m_entries.size() < kMaxTracks; ++it) {
+        const QString path = it.key();
+        if (!safeLocalPath(path) || !isMusicFile(path)) continue;
+        const QFileInfo info(path);
+        if (!info.isFile() || info.isSymLink() || info.canonicalFilePath() != path) continue;
         const QJsonObject entry = it.value().toObject();
-        m_entries.insert(it.key(), {entry.value(QStringLiteral("size")).toInteger(),
-                                    entry.value(QStringLiteral("modified")).toInteger(),
-                                    entry.value(QStringLiteral("tags")).toObject()});
+        auto tags = entry.value(QStringLiteral("tags")).toObject();
+        validateArtwork(tags, path, m_artworkDirectory);
+        m_entries.insert(path, {entry.value(QStringLiteral("size")).toInteger(),
+                                entry.value(QStringLiteral("modified")).toInteger(), std::move(tags)});
     }
     // what was there last time shows at once; the search that follows
     // brings it up to date
@@ -337,7 +398,7 @@ QStringList LocalLibrary::scanSources() const
 
 bool LocalLibrary::isKeptCopy(const QString &path) const
 {
-    return !path.isEmpty() && isWithin(path, m_trackStore) && path != m_trackStore;
+    return isKeptTrack(path, m_trackStore);
 }
 
 QList<Song> LocalLibrary::allSongs() const
@@ -396,46 +457,51 @@ QList<Song> LocalLibrary::songsFrom(const QHash<QString, Entry> &entries)
 }
 
 LocalLibrary::ScanResult LocalLibrary::scan(const QStringList &sources, QHash<QString, Entry> known,
-                                            const QString &artworkDirectory, const QString &cachePath)
+                                            const QString &artworkDirectory, const QString &cachePath,
+                                            const std::shared_ptr<std::atomic_bool> &cancel)
 {
-    QStringList files;
-    QSet<QString> seen;
-    const auto take = [&](const QFileInfo &info) {
-        const QString path = info.absoluteFilePath();
-        if (isMusicFile(path) && !seen.contains(path)) {
-            seen.insert(path);
-            files.append(path);
-        }
-    };
-    for (const QString &source : sources) {
-        const QFileInfo info(source);
-        if (info.isFile()) {
-            take(info);
-            continue;
-        }
-        // hidden files are left out, and with them the "._" shadows macos
-        // leaves on other disks
-        QDirIterator walk(source, QDir::Files | QDir::Readable | QDir::NoDotAndDotDot, QDirIterator::Subdirectories);
-        while (walk.hasNext()) {
-            walk.next();
-            take(walk.fileInfo());
-        }
-    }
-
     QHash<QString, Entry> entries;
-    for (const QString &path : files) {
-        const QFileInfo info(path);
+    qint64 metadataBytes = 0;
+    qint64 visited = 0;
+    QElapsedTimer elapsed;
+    elapsed.start();
+    const auto reachedLimit = [&] {
+        return entries.size() >= kMaxTracks || visited >= kMaxEntriesVisited
+            || metadataBytes >= kMaxCacheBytes / 2 || elapsed.hasExpired(15 * 60 * 1000);
+    };
+    const auto take = [&](const QFileInfo &info) {
+        ++visited;
+        if (!info.isFile() || info.isSymLink()) return;
+        const QString path = info.canonicalFilePath();
+        if (path.isEmpty() || !isMusicFile(path) || entries.contains(path)) return;
         Entry entry {info.size(), info.lastModified().toMSecsSinceEpoch(), {}};
         const auto cached = known.constFind(path);
         if (cached != known.cend() && cached->size == entry.size && cached->modified == entry.modified) {
             entry.tags = cached->tags;
         } else {
             entry.tags = readTags(path, artworkDirectory);
-            // an unreadable file is remembered as such, and not tried again
-            // until it changes
         }
-        entries.insert(path, entry);
+        validateArtwork(entry.tags, path, artworkDirectory);
+        metadataBytes += QJsonDocument(entry.tags).toJson(QJsonDocument::Compact).size() + 2 * path.size() + 128;
+        entries.insert(path, std::move(entry));
+    };
+    for (const QString &source : sources) {
+        if (reachedLimit() || cancel->load()) break;
+        const QFileInfo info(source);
+        if (info.isFile()) {
+            take(info);
+            continue;
+        }
+        if (!info.isDir() || info.isSymLink()) continue;
+        QDirIterator walk(source, QDir::AllEntries | QDir::Readable | QDir::NoDotAndDotDot | QDir::NoSymLinks,
+                          QDirIterator::Subdirectories);
+        while (!cancel->load() && !reachedLimit() && walk.hasNext()) {
+            walk.next();
+            take(walk.fileInfo());
+        }
     }
+    if (cancel->load()) return {};
+    if (reachedLimit()) qCWarning(lcLocal) << "The local scan reached its resource limit.";
 
     ScanResult result;
     result.songs = songsFrom(entries);
@@ -574,7 +640,12 @@ bool LocalLibrary::loadPlaylists()
         return false;
     }
     QJsonParseError error;
-    const QJsonDocument document = QJsonDocument::fromJson(file.readAll(), &error);
+    const QByteArray data = file.read(kMaxPlaylistBytes + 1);
+    if (data.size() > kMaxPlaylistBytes) {
+        qCWarning(lcLocal) << "The local playlist file exceeds its size limit.";
+        return false;
+    }
+    const QJsonDocument document = QJsonDocument::fromJson(data, &error);
     if (error.error != QJsonParseError::NoError || !document.isObject()) {
         qCWarning(lcLocal).noquote() << "could not read the playlists in" << m_playlistsPath << ':' << error.errorString();
         return false;
@@ -591,11 +662,17 @@ bool LocalLibrary::loadPlaylists()
                                object.value(QStringLiteral("description")).toString(),
                                object.value(QStringLiteral("cover")).toString(),
                                {}};
-        if (!stored.id.startsWith(kLocalPrefix) || findPlaylist(stored.id)) {
+        static const QRegularExpression id(QStringLiteral("\\Alocal:[A-Za-z0-9_-]{1,64}\\z"));
+        if (!id.match(stored.id).hasMatch() || findPlaylist(stored.id)) {
             continue;
         }
+        if (coverPath(stored).isEmpty()) stored.cover.clear();
         for (const QJsonValue &uri : object.value(QStringLiteral("songs")).toArray()) {
-            stored.uris.append(uri.toString());
+            const QString value = uri.toString();
+            if (safeSongUri(value)) {
+                const auto path = QUrl(value).toLocalFile();
+                if (!isWithin(path, m_trackStore) || isKeptCopy(path)) stored.uris.append(value);
+            }
         }
         m_storedPlaylists.append(stored);
     }
@@ -707,8 +784,8 @@ Playlist LocalLibrary::describe(const StoredPlaylist &stored, const SongIndex &i
     playlist.ownerName = QStringLiteral("Local Files");
     const QList<Song> songs = resolve(stored, index);
     playlist.songCount = int(songs.size());
-    if (!stored.cover.isEmpty()) {
-        playlist.artworkUrl = QUrl::fromLocalFile(m_coverDirectory + u'/' + stored.cover);
+    if (const auto path = coverPath(stored); !path.isEmpty()) {
+        playlist.artworkUrl = QUrl::fromLocalFile(path);
     } else {
         // the first cover among its songs, as a playlist without one of its
         // own shows in spotify
@@ -748,9 +825,18 @@ QList<Song> LocalLibrary::songsOf(const QString &id) const
     return stored ? resolve(*stored, indexSongs()) : QList<Song> {};
 }
 
+QString LocalLibrary::coverPath(const StoredPlaylist &stored) const
+{
+    if (stored.cover.isEmpty()) return {};
+    static const QRegularExpression filename(QStringLiteral("\\A[A-Za-z0-9_-]{1,96}\\.jpg\\z"));
+    const QString path = QDir(m_coverDirectory).filePath(stored.cover);
+    return filename.match(stored.cover).hasMatch() && isManagedFile(path, m_coverDirectory) ? path : QString();
+}
+
 QString LocalLibrary::writeCover(const StoredPlaylist &stored, const QByteArray &jpeg) const
 {
-    QDir().mkpath(m_coverDirectory);
+    if (jpeg.size() > 32 * 1024 * 1024 || QFileInfo(m_coverDirectory).isSymLink()
+        || !QDir().mkpath(m_coverDirectory)) return stored.cover;
     const QString name = stored.id.mid(kLocalPrefix.size()) + u'-'
         + QUuid::createUuid().toString(QUuid::Id128).left(8) + QStringLiteral(".jpg");
     QSaveFile file(m_coverDirectory + u'/' + name);
@@ -758,9 +844,7 @@ QString LocalLibrary::writeCover(const StoredPlaylist &stored, const QByteArray 
         qCWarning(lcLocal).noquote() << "could not keep the cover for" << stored.name << ':' << file.errorString();
         return stored.cover;
     }
-    if (!stored.cover.isEmpty()) {
-        QFile::remove(m_coverDirectory + u'/' + stored.cover);
-    }
+    if (const auto previous = coverPath(stored); !previous.isEmpty()) QFile::remove(previous);
     return name;
 }
 
@@ -807,9 +891,7 @@ bool LocalLibrary::deletePlaylist(const QString &id)
     if (!stored) {
         return false;
     }
-    if (!stored->cover.isEmpty()) {
-        QFile::remove(m_coverDirectory + u'/' + stored->cover);
-    }
+    if (const auto cover = coverPath(*stored); !cover.isEmpty()) QFile::remove(cover);
     m_storedPlaylists.removeIf([&](const StoredPlaylist &item) { return item.id == id; });
     collectCopies();
     savePlaylists();
@@ -872,12 +954,12 @@ const QStringList kCoverExtensions {QStringLiteral("jpg"), QStringLiteral("jpeg"
 /// a track's lyrics (a .lrc of its name) and its folder's cover go with it
 void copyCompanions(const QFileInfo &track, const QString &into)
 {
-    const QFileInfoList beside = track.dir().entryInfoList(QDir::Files | QDir::Readable);
+    const QFileInfoList beside = track.dir().entryInfoList(QDir::Files | QDir::Readable | QDir::NoSymLinks);
     for (const QFileInfo &file : beside) {
         const QString suffix = file.suffix().toLower();
         const bool lyrics = suffix == QLatin1StringView("lrc") && file.completeBaseName() == track.completeBaseName();
         const bool cover = kCoverExtensions.contains(suffix) && kFolderCoverNames.contains(file.completeBaseName().toLower());
-        if (lyrics || cover) {
+        if ((lyrics || cover) && file.size() <= 32 * 1024 * 1024) {
             QFile::copy(file.absoluteFilePath(), into + u'/' + file.fileName());
         }
     }
@@ -897,7 +979,7 @@ LocalLibrary::KeepResult LocalLibrary::keep(const QStringList &inputs, const QSt
         const QFileInfo info(input);
         if (info.isDir()) {
             QStringList found;
-            QDirIterator walk(input, QDir::Files | QDir::Readable | QDir::NoDotAndDotDot, QDirIterator::Subdirectories);
+            QDirIterator walk(input, QDir::Files | QDir::Readable | QDir::NoDotAndDotDot | QDir::NoSymLinks, QDirIterator::Subdirectories);
             while (walk.hasNext()) {
                 walk.next();
                 if (isMusicFile(walk.filePath())) {
@@ -924,18 +1006,22 @@ LocalLibrary::KeepResult LocalLibrary::keep(const QStringList &inputs, const QSt
     for (const QString &path : paths) {
         Kept kept;
         kept.source = path;
-        if (isWithin(path, store)) {
+        if (isKeptTrack(path, store)) {
             kept.uri = QUrl::fromLocalFile(path).toString();
             result.kept.append(kept);
             continue;
         }
         const QFileInfo info(path);
         const QString source = info.canonicalFilePath();
+        if (source.isEmpty() || !info.isFile() || isWithin(path, store) || isWithin(source, store)) {
+            result.failed.append(info.fileName());
+            continue;
+        }
         const qint64 size = info.size();
         const qint64 modified = info.lastModified().toMSecsSinceEpoch();
         if (const auto copy = bySource.constFind(source); copy != bySource.cend()) {
             const Origin origin = known.value(*copy);
-            if (origin.size == size && origin.modified == modified && QFileInfo::exists(*copy)) {
+            if (origin.size == size && origin.modified == modified && isKeptTrack(*copy, store)) {
                 kept.uri = QUrl::fromLocalFile(*copy).toString();
                 result.kept.append(kept);
                 continue;
@@ -956,7 +1042,12 @@ LocalLibrary::KeepResult LocalLibrary::keep(const QStringList &inputs, const QSt
         };
         // written aside and moved into place: a copy cut short is never taken
         // for the song
-        if (!QDir().mkpath(home) || !QFile::copy(path, partial) || !QFile::rename(partial, copy)) {
+        if (QFileInfo(store).isSymLink() || !QDir().mkpath(store)
+            || !QDir(store).mkdir(QFileInfo(folder).fileName())) {
+            result.failed.append(info.fileName());
+            continue;
+        }
+        if (!QDir(folder).mkdir(parent) || !QFile::copy(source, partial) || !QFile::rename(partial, copy)) {
             fail();
             continue;
         }
@@ -1077,7 +1168,8 @@ void LocalLibrary::adoptOutsideTracks()
     for (const StoredPlaylist &stored : std::as_const(m_storedPlaylists)) {
         for (const QString &uri : stored.uris) {
             const QString path = QUrl(uri).toLocalFile();
-            if (!path.isEmpty() && !isKeptCopy(path) && QFileInfo(path).isFile() && !outside.contains(path)) {
+            if (safeLocalPath(path) && !isWithin(path, m_trackStore) && QFileInfo(path).isFile()
+                && !QFileInfo(path).isSymLink() && !outside.contains(path)) {
                 outside.append(path);
             }
         }
@@ -1103,9 +1195,7 @@ void LocalLibrary::collectCopies()
         }
         // the folder it was given goes whole, its lyrics and cover with it
         const QString folder = store.relativeFilePath(it.key()).section(u'/', 0, 0);
-        if (!folder.isEmpty() && folder != QLatin1StringView("..")) {
-            QDir(store.filePath(folder)).removeRecursively();
-        }
+        if (isKeptCopy(it.key())) QDir(store.filePath(folder)).removeRecursively();
         m_entries.remove(it.key());
         m_storeSongs.remove(QUrl::fromLocalFile(it.key()).toString());
         it = m_copies.erase(it);
@@ -1114,6 +1204,7 @@ void LocalLibrary::collectCopies()
 
 void LocalLibrary::sweepStore()
 {
+    if (QFileInfo(m_trackStore).isSymLink()) return;
     // a folder a copy was being written into when the app stopped, or one
     // whose playlist went while it was away
     const QDir store(m_trackStore);
