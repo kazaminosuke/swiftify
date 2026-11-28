@@ -40,10 +40,22 @@
 
 - `integration` を開発の中心とし、単独で移行・ビルドできる状態にする。`main` は上流追従専用とし、無断でマージしない。既存の Draft PR 21 件は集約やクローズの対象外とし、新規 PR を作らない。
 - リポジトリ自体の削除・再作成はユーザーが行う。現行ドキュメントから旧 Draft PR の番号・リンクへの依存を取り除き、不要な引き継ぎ情報、作業ログ、廃止手順を整理する。監査記録は歴史的資料として保全し、現行仕様と区別する。ライセンス、著作権表示、クレジット、必要なコミット履歴を維持し、履歴の書き換えを避ける。
-- AI 共同著者は、コミットに次のトレーラーを使用する。従来の `Generated-by` トレーラーは付けない。
+- このフォークの新規コミットは、Author と Committer の両方に `kazaminosuke <99616465+kazaminosuke@users.noreply.github.com>` を使用する。作業開始時にリポジトリローカルの Git 設定を確認し、必要なら次のとおり設定する。
+
+  ```sh
+  git config --local user.name kazaminosuke
+  git config --local user.email '99616465+kazaminosuke@users.noreply.github.com'
+  git config --local user.useConfigOnly true
+  git var GIT_AUTHOR_IDENT
+  git var GIT_COMMITTER_IDENT
+  ```
+
+  実効値が異なる場合は、`GIT_AUTHOR_*` と `GIT_COMMITTER_*` などの上書きを解消してからコミットする。
+
+- AI が共同執筆したコミットには次のトレーラーを使用する。従来の `Generated-by` トレーラーは付けない。コミット後に Author、Committer と共同著者を確認する。
 
   ```text
-  Co-authored-by: chatgpt-codex-connector[bot] <199175422+chatgpt-codex-connector[bot]@users.noreply.github.com>
+  Co-authored-by: Codex <codex@openai.com>
   ```
 
 - 既存実装や過去の判断を製品要件に照らして再評価する。技術的に満たせない要件と重大な判断の理由・制約は明示する。重大な設計変更、技術選定の変更、主要機能の省略や代替仕様への切り替えは実装前に報告し、承認を得る。軽微な判断は自律的に行い、中核機能の成立を優先する。
