@@ -5,11 +5,12 @@
 
 ## ダウンロードと起動
 
-GitHub にログインし、`integration` の成功した実行から `linux-disabled` を取得して
-ZIP を展開します。アーカイブは Qt 6.12.1 を同梱した Spotify 無効構成です。
+GitHub の Actions で `integration` に絞り込み、試したいコミットの
+`prebuilt` が成功したことを確認します。Artifacts から `linux-disabled` を取得して
+ZIP を展開します。アーカイブは Qt を同梱した Spotify 無効構成です。
 `.dependencies.txt` にはビルド元コミット、Cargo の有効な依存グラフ、
 同梱ライブラリとホスト側のライブラリが記録されています。
-[GitHub Actions](https://github.com/kazaminosuke/swiftify/actions/workflows/prebuilt.yml?query=branch%3Aintegration)
+[パッケージ生成ワークフロー](../.github/workflows/prebuilt.yml)
 
 展開したアーカイブとチェックサムがあるディレクトリで実行します。
 パッケージ名はダウンロードしたバージョンに合わせてください。
@@ -29,8 +30,7 @@ sha256sum -c "$package.tar.gz.sha256" &&
 ```
 
 試用前に既存の Swiftify を終了してください。再生ウィンドウは同じ
-Wayland セッション内の Swiftify を検出します。アプリの設定、試用中に作った
-プレイリスト、キャッシュは上の `profile` に入ります。
+Wayland セッション内の Swiftify を検出します。アプリの設定、試用中に作成したプレイリスト、キャッシュは上の `profile` に保存されます。
 Wayland と PipeWire には現在のセッションを使います。
 
 音が出ないときは `wpctl status` で PipeWire の既定出力を確認します。
@@ -51,23 +51,21 @@ ZIP を削除します。試用中に編集した音楽ファイルや同じ場�
 - 音源と同名の `.lrc`／`.ttml` の表示、シーク時の行・単語の追従、曲別オフセットの保存
 - 未設定のローカル起動と再生中の外部通信
 
-通常起動はローカルライブラリです。`--youtube` は別ウィンドウのカタログを
-開きます。カタログのデータ取得には Google 側の設定が必要です。
-YouTube Music のアプリ内ストリーミングと既存の再生キューへの接続は未実装です。
-Alignment Lab は独立したツールです。
-[YouTube カタログの仕様](youtube-catalogue.md) · [Alignment Lab の Draft](https://github.com/kazaminosuke/swiftify/pull/15)
+試用版では、ローカル再生と音声処理を上記の手順で確認できます。
+YouTube Music は [バックエンド検証](youtube-music-backend.md)を参照してください。
+[Alignment Lab](../tools/alignment-lab/README.md) は別途ビルドする任意ツールです。
 
 ## CachyOS でソースからビルドする場合
 
 ディストリビューションで Qt 6.12.1 以上と下記の開発パッケージを揃えます。
 既に揃っている場合はユーザー権限で構成、ビルド、インストールできます。
+フォークのチェックアウトのルートで実行します。
 
 ```bash
 sudo pacman -S --needed base-devel git cmake ninja rust pkgconf qcoro \
-  qt6-base qt6-declarative qt6-shadertools qt6-wayland qt6-networkauth libpulse alsa-lib
+  qt6-base qt6-declarative qt6-shadertools qt6-wayland libpulse alsa-lib
 
-git clone --branch integration https://github.com/kazaminosuke/swiftify.git
-cd swiftify
+git switch integration
 cmake -S . -B build-cachyos -G Ninja -DCMAKE_BUILD_TYPE=Release \
   -DENABLE_SPOTIFY=OFF -DBUILD_TESTING=OFF \
   -DCMAKE_INSTALL_PREFIX="$HOME/.local/opt/swiftify-cachyos"

@@ -18,10 +18,7 @@ The Linux ALSA null-device test covers reopening a paused Opus track,
 position and generation, and volume and mute preservation. Physical
 WASAPI/ALSA/PipeWire device selection and disconnect timing are unverified.
 
-## Codex usage (JST)
-
-- 2026-11-20 19:18. Official App Server returned HTTP 401 during audio output
-  testing. No remaining-usage percentage was available.
+## Qt desktop recovery
 
 The Qt local file route also forwards CPAL stream and command failures to
 the existing Qt recovery state. A lost sink does not report natural end of

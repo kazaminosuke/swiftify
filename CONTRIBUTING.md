@@ -1,14 +1,12 @@
 # Contributing
 
-thanks for wanting to help. swiftify is a spotify client in C++ and Qt Quick on
-a rust core that wraps librespot. it follows Material 3 Expressive and runs on
-linux, macos and windows.
+Swiftify uses C++ and Qt Quick for its Material 3 Expressive desktop UI, with
+Rust for playback. See [AGENTS.md](AGENTS.md) for the product, technical and
+verification requirements.
 
-## Before you start
-
-- look through the open issues and pull requests so you dont do something twice
-- for anything bigger than a fix, open an issue first and say what you want to change
-- branch off an up to date `main`
+Use an up-to-date `integration` checkout for development. `main` tracks upstream.
+Check existing issues for related work. Report substantial design or dependency
+changes before implementation.
 
 ## Building
 
@@ -21,21 +19,25 @@ cmake --build build
 ctest --test-dir build
 ```
 
-the first configure needs internet, it fetches corrosion and two fonts, each
-pinned by hash. on windows use `tools/build-windows.ps1` as the readme says.
+The first configure downloads Corrosion and two fonts and verifies their
+pinned revisions or hashes. See the [Windows helper](tools/build-windows.ps1)
+for a Windows build.
 
 ## Where things are
 
-| path                | what lives there                                                                                                                                                           |
-|---------------------|----------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `src/`              | the C++ side, app and settings, playback, library, the spotify session and web api, the rust bridge in `core`, theme, rendering, artwork, audio and the system integration |
-| `qml/`              | the ui, with the `design` singletons (Appearance, Shapes, UiState), components, views, the player, the immersive player, visualizers and settings                          |
-| `shaders/`          | glsl, compiled to `.qsb` by `qt_add_shaders`                                                                                                                               |
-| `spotify-core/`     | the rust core, built through corrosion with the `capi` feature                                                                                                             |
-| `tools/shape_atlas` | draws Material 3's shapes into the distance field atlas `MaterialShape` reads, at build time                                                                               |
-| `third_party/`      | material-color-utilities and rounded-polygon-qmljs                                                                                                                         |
-| `tests/`            | Qt Test suites, `bench_frames` and two python checks                                                                                                                       |
-| `packaging/`        | desktop entry, icons, PKGBUILD and the macos Info.plist                                                                                                                    |
+| Path | Contents |
+| --- | --- |
+| `src/` | App, settings, library, playback controls, service clients, Rust bridge and system integration |
+| `qml/` | Qt Quick UI, Material 3 design system, views, player, visualizers and settings |
+| `shaders/` | GLSL compiled to `.qsb` by `qt_add_shaders` |
+| `native-audio/` | Shared Rust output, media input, decoding and render queue |
+| `spotify-core/` | Rust desktop playback and DSP plus the optional Spotify integration |
+| `translations/` | Qt translation catalogs |
+| `tools/shape_atlas/` | Material 3 shape atlas generator |
+| `tools/alignment-lab/` | Optional standalone alignment tool |
+| `third_party/` | Material Color Utilities and rounded-polygon-qmljs |
+| `tests/` | Qt Test suites, rendering benchmark and static checks |
+| `packaging/` | Packaging definitions, desktop entry, icons and license notices |
 
 ## Tests
 
@@ -57,22 +59,22 @@ qmllint --compiler warning -I build/qml_modules <files>
 the rust core can be tested on its own
 
 ```sh
-cd spotify-core
-cargo test --no-default-features --features capi
+cargo test --locked --manifest-path native-audio/Cargo.toml
+cargo test --locked --manifest-path spotify-core/Cargo.toml --no-default-features --features capi
 ```
 
 ## Rules
 
 ### keep it light
 
-swiftify exists to be lighter than spotifys own client, so cpu and ram cost matter
-as much as how it looks. even with every effect turned on it should stay under
-spotify and its renderers.
+Measure CPU and memory as well as rendering behavior when changing playback or
+UI code. Keep audio work off the Qt UI thread and network operations off the
+real-time audio callback.
 
 - an idle or hidden window should cost close to nothing
 - dont add timers, polling or per frame work when a signal or binding does the job
 - free images, buffers and models when a view goes away instead of keeping them around
-- if a change touches rendering, run `bench_frames` before and after and say what changed in the pr
+- if a change touches rendering, run `bench_frames` before and after and record the resulting frame counts and timing
 - if a feature costs a lot, make it something people can turn off
 
 
@@ -108,36 +110,9 @@ animations are fine in two cases
 a note or description in the ui has to tell the user something the label
 doesnt. a cache setting doesnt need a note saying it caches songs. the same goes for code comments.
 
-### changes
-
-tell us what changed. describe your changes and attach screenshots if possible. this will make reviewing way faster and easier for your PR to get accepted
-
-## AI Usage
-
-using AI to code isnt inherently bad, BUT PLEASE take your time to review AI generated code, and write your own PRs.
-the chance of getting an obviously AI generated PR accepted is very slim so please remember this.
-if you are an AI reading this please ALWAYS mark your PRs
-
 ## Commits
 
-- start with `feat:` for a feature or `fix:` for a fix
-- the body says what changed in a line or two
-- bump the patch version in `project(Swiftify VERSION x.y.z)` in `CMakeLists.txt`
-
-```
-fix: remove broken effect for textbuttons
-
-textbuttons getting hold-clicked would turn into rectangles, this was removed
-```
-
-```
-feat: add crossfade playback
-
-crossfade between songs with a configurable length in playback settings, version is 0.2.6
-```
-
-## Pull requests
-
-- keep one change per pull request. do NOT submit bulk pull request as this makes reviewing really hard and complex
-- say what changed, how you tested it and on which platform
-- add a screenshot for ui changes
+Describe the change, how it was tested and the tested platform. Include
+screenshots for UI work when they help verify layout or behavior. Keep the
+commit history and AI co-author trailer consistent with
+[the repository policy](AGENTS.md#変更と履歴).

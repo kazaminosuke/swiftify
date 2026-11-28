@@ -263,7 +263,7 @@ Item {
         footer: StyledText {
             leftPadding: 18
             topPadding: 46
-            text: qsTr("Lyrics provided by ") + Player.lyricsProvider
+            text: qsTr("Lyrics provided by ") + qsTranslate("LyricsProvider", Player.lyricsProvider)
             font.pixelSize: Appearance.fontSize.smaller
             color: Qt.rgba(1, 1, 1, 0.4)
         }

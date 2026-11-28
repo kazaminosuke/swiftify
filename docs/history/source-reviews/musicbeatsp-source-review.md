@@ -1,5 +1,7 @@
 # MusicBeatSP source review
 
+> Historical source review. [Current product requirements](../../../AGENTS.md)
+
 This review reads the Android Gradle entry points, Kotlin call sites, C++ JNI
 targets and both Linux source trees at MusicBeatSP commit
 `abcac36660db6096d76db9ebed71d65637bd522a`. It records source wiring. The

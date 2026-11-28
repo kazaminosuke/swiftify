@@ -178,7 +178,7 @@ ApplicationWindow {
         target: LocalFiles
         function onTracksAdded(playlistId: string, count: int, problem: string) {
             const added = count > 0 ? qsTr("Tracks added: %1").arg(count) : ""
-            const said = [added, problem].filter(part => part.length > 0).join(" ")
+            const said = [added, qsTranslate("Errors", problem)].filter(part => part.length > 0).join(" ")
             if (said.length > 0) {
                 toast.show(said)
             }
