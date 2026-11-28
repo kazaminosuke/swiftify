@@ -74,6 +74,17 @@ Qt 本体が使う Rust の `spotify-core` は Spotify 無効時にもローカ�
 | 音質、バッファリング、通信量、音切れ | 同じフォーマットと出力レートでコーデック、ビットレート、サンプルレート、チャンネル数と再エンコードの有無を確認する。メディア・制御要求の転送量、バッファ最大値、枯渇回数、途切れとその時間を記録する。音質の比較では同じ録音を使い、DSP 設定を固定する。 |
 | 再生時計、歌詞、テンポ変更 | 許可された同期基準付き音源と既存の LRC、Enhanced LRC、TTML を使用する。PipeWire モニターまたは実機ループバックで出力とタイムスタンプを照合する。開始、停止・再開、シーク、バッファ枯渇、出力復旧、1倍速と変速時の位置誤差、行・単語キュー、曲別オフセットを比較する。仮想デバイスでの出力確認と実機の可聴遅延は別に記録する。 |
 
+### Spotify 無効版の起動実測
+
+2026年11月28日、同じ Debian 13 x86_64 クラウド、Xvfb（1440×900）、XCB、ソフトウェア GL で GitHub Actions の配布パッケージを交互に5回ずつ起動した。各回の XDG プロファイルは新規で、表示言語は英語。起動時間はプロセス開始からメインウィンドウの X11 マップを検出するまで。マップ後2秒待ってアイドル状態の CPU を3秒間観測し、終点の `/proc/<pid>/smaps_rollup` から RSS・PSS を採った。表は Swiftify プロセスの中央値。OS のページキャッシュは通常の状態で使った。
+
+| パッケージのビルド元 | ウィンドウ表示まで | アイドル CPU | RSS | PSS |
+| --- | ---: | ---: | ---: | ---: |
+| 廃止前 `675d022` | 529.9 ms | 0.0% | 210,768 KiB | 190,653 KiB |
+| 廃止後 `c6122e0` | 555.1 ms | 0.0% | 210,660 KiB | 190,485 KiB |
+
+起動時間の範囲は廃止前502.8〜801.3 ms、廃止後513.0〜581.4 ms。少数の試行で範囲が重なっており、速度差の判断は保留する。CPU の0.0%は3秒間のプロセス計測の分解能内。実機の描画、YouTube Music の再生負荷、音声の遅延・同期は測定していない。 [廃止前パッケージ](https://github.com/kazaminosuke/swiftify/actions/runs/46126898294) · [廃止後パッケージ](https://github.com/kazaminosuke/swiftify/actions/runs/46144340974)
+
 [ytmapi-manifest]: https://github.com/nick42d/youtui/blob/d381ea4ce9ec4eb667c7bf8b484bc2db94931c76/ytmapi-rs/Cargo.toml
 [ytmapi-queries]: https://github.com/nick42d/youtui/blob/d381ea4ce9ec4eb667c7bf8b484bc2db94931c76/ytmapi-rs/src/simplified_queries.rs
 [ytmapi-http]: https://github.com/nick42d/youtui/blob/d381ea4ce9ec4eb667c7bf8b484bc2db94931c76/ytmapi-rs/src/client.rs
