@@ -361,9 +361,11 @@ private slots:
         rig.core.duration = song.durationMs;
 
         rig.player.play(song, {song});
-        if (!rig.core.pending.isEmpty()) {
-            if (const auto call = rig.core.take(QStringLiteral("playFile"))) call->succeed();
-        }
+        QTRY_VERIFY(!rig.core.pending.isEmpty());
+        const auto call = rig.core.take(QStringLiteral("playFile"));
+        QVERIFY(call);
+        call->succeed();
+        QTRY_VERIFY(rig.player.isPlaying());
         QVERIFY(!rig.presence.inactivityTimerActive());
 
         rig.player.pause();
