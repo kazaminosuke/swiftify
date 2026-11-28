@@ -17,7 +17,6 @@
  */
 
 use std::{
-    io,
     path::PathBuf,
     sync::{
         Arc, Mutex,
@@ -855,7 +854,7 @@ impl SpotifyCore {
             && let Some(local) = &state.local_playback
         {
             let duration = local.duration_ms.min(u32::MAX as u64) as u32;
-            return local.position_ms().min(duration);
+            return if duration == 0 { local.position_ms() } else { local.position_ms().min(duration) };
         }
         self.timeline
             .lock()
@@ -1020,25 +1019,8 @@ impl SpotifyCore {
         self.play_path_as(path, ticket)
     }
 
-    fn open_decoder(
-        path: &std::path::Path,
-    ) -> Result<rodio::Decoder<io::BufReader<std::fs::File>>, String> {
-        let file = std::fs::File::open(path)
-            .map_err(|error| format!("failed to open local track: {error}"))?;
-        let length = file.metadata().map(|metadata| metadata.len()).ok();
-        let mut builder = rodio::Decoder::builder()
-            .with_data(io::BufReader::new(file))
-            .with_seekable(true);
-        // the length lets an mp4 be read from its index at the end, and the
-        // extension spares the probe guessing
-        if let Some(length) = length {
-            builder = builder.with_byte_len(length);
-        }
-        if let Some(extension) = path.extension().and_then(|extension| extension.to_str()) {
-            builder = builder.with_hint(extension);
-        }
-        builder
-            .build()
+    fn open_decoder(path: &std::path::Path) -> Result<swiftify_native_audio::decode::FileSource, String> {
+        swiftify_native_audio::decode::open_file(path)
             .map_err(|error| format!("failed to decode local track: {error}"))
     }
 
@@ -1068,9 +1050,6 @@ impl SpotifyCore {
             .map(|d| d.as_millis() as u64)
             .or_else(|| local::measure_duration_ms(&path))
             .unwrap_or(0);
-        let channels = decoder.channels() as u32;
-        let sample_rate = decoder.sample_rate();
-
         let pushed_frames = Arc::new(AtomicU64::new(0));
         let cancel = Arc::new(AtomicBool::new(false));
         let source_frames = Arc::clone(&pushed_frames);
@@ -1102,8 +1081,6 @@ impl SpotifyCore {
                 duration_ms,
                 pushed_frames,
                 base_position_ms: 0,
-                channels,
-                sample_rate,
                 replay_gain,
                 cancel: Arc::clone(&cancel),
             });
@@ -1389,35 +1366,30 @@ impl SpotifyCore {
             .clone()
             .ok_or_else(|| "no local playback is active".to_owned())?;
         let duration = playback.duration_ms;
-        let channels = playback.channels.max(1);
-        let sample_rate = playback.sample_rate.max(1);
-        let target = (position_ms as u64).min(duration);
-
-        if let Ok(mut timeline) = self.timeline.lock() {
-            timeline.end_of_track = false;
+        let target = if duration == 0 { u64::from(position_ms) } else { u64::from(position_ms).min(duration) };
+        let path = playback.path.clone();
+        let mut decoder = Self::open_decoder(&path)?;
+        if target != 0 && decoder.try_seek(Duration::from_millis(target)).is_err() {
+            // A failed demuxer seek need not preserve its cursor. Start again
+            // before counting samples for the sequential fallback.
+            decoder = Self::open_decoder(&path)?;
+            let target_samples = target * u64::from(decoder.sample_rate()) / 1_000 * u64::from(decoder.channels());
+            let skipped = decoder.by_ref().take(target_samples as usize).count() as u64;
+            if skipped < target_samples {
+                return Err("local seek exceeds the end of the file".to_owned());
+            }
         }
 
+        let _switching = self.lock_switching();
+        if self.lock_state()?.local_playback.as_ref()
+            .is_none_or(|current| !Arc::ptr_eq(&current.cancel, &playback.cancel))
+        {
+            return Err(SUPERSEDED.to_owned());
+        }
         let sink = self.resolve_live_sink()?;
         let was_paused = sink.is_paused();
         playback.cancel.store(true, Ordering::Relaxed);
         sink.clear();
-        playback.pushed_frames.store(0, Ordering::Relaxed);
-
-        let path = playback.path.clone();
-
-        // re-decode and fast-forward to the target position.
-        let mut decoder = Self::open_decoder(&path)?;
-
-        if decoder.try_seek(Duration::from_millis(target)).is_err() {
-            let target_samples = target * sample_rate as u64 / 1_000 * channels as u64;
-            let mut skipped: u64 = 0;
-            while skipped < target_samples {
-                match decoder.next() {
-                    Some(_) => skipped += 1,
-                    None => break,
-                }
-            }
-        }
 
         let pushed_frames = Arc::new(AtomicU64::new(0));
         let cancel = Arc::new(AtomicBool::new(false));
@@ -1447,8 +1419,6 @@ impl SpotifyCore {
             duration_ms: duration,
             pushed_frames,
             base_position_ms: target,
-            channels,
-            sample_rate,
             replay_gain,
             cancel: Arc::clone(&cancel),
         });
