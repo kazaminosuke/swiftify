@@ -43,7 +43,10 @@ public:
     ~Translations() override;
     QString translate(const char *context, const char *sourceText,
                       const char *disambiguation = nullptr, int n = -1) const override;
-    bool isEmpty() const override { return m_russian.entries.isEmpty() && m_german.entries.isEmpty(); }
+    bool isEmpty() const override
+    {
+        return m_russian.entries.isEmpty() && m_german.entries.isEmpty() && m_japanese.entries.isEmpty();
+    }
 
     static bool isLanguageEnabled(QStringView language);
     static void setLanguageEnabled(QStringView language, bool enabled);
@@ -70,6 +73,7 @@ private:
     Settings *m_settings;
     Catalog m_russian;
     Catalog m_german;
+    Catalog m_japanese;
     const Catalog *m_active = nullptr;
     QLocale m_previousLocale;
 };

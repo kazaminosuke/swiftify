@@ -382,24 +382,31 @@ Item {
                 symbol: "language"
 
                 ConfigSelection {
+                    id: languageSelection
+
+                    readonly property list<string> languages: ["system", "en", "ru", "de", "ja"]
+
                     text: qsTr("Interface language")
                     objectName: "languageSelection"
-                    currentIndex: ["system", "en", "ru", "de"].indexOf(Settings.language)
+                    currentIndex: languages.indexOf(Settings.language)
+                    stackWhenNarrow: true
+                    segmentPadding: 6
                     segments: [
                         Segment { text: qsTr("System") },
                         Segment { text: "English" },
                         Segment {
                             text: "Русский"
                             enabled: Settings.russianEnabled
-                            tooltip: Settings.russianEnabled ? "" : Settings.disabledLanguageMessage
+                            tooltip: Settings.russianEnabled ? "" : qsTranslate("Settings", Settings.disabledLanguageMessage)
                         },
                         Segment {
                             text: "Deutsch"
                             enabled: Settings.germanEnabled
-                            tooltip: Settings.germanEnabled ? "" : Settings.disabledLanguageMessage
-                        }
+                            tooltip: Settings.germanEnabled ? "" : qsTranslate("Settings", Settings.disabledLanguageMessage)
+                        },
+                        Segment { text: Qt.locale("ja_JP").nativeLanguageName }
                     ]
-                    onActivated: (index) => Settings.language = ["system", "en", "ru", "de"][index]
+                    onActivated: (index) => Settings.language = languageSelection.languages[index]
                 }
             }
 

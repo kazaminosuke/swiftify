@@ -52,13 +52,11 @@ QString runtimeDirectory()
     return directory;
 }
 
-QString serverName(SingleInstance::Mode mode)
+QString serverName()
 {
     const auto directory = runtimeDirectory();
     const QByteArray identity = QCryptographicHash::hash(directory.toUtf8(), QCryptographicHash::Sha256).toHex().left(16);
-    const auto prefix = mode == SingleInstance::Mode::Catalogue ? QStringLiteral("swiftify-catalogue-")
-                                                               : QStringLiteral("swiftify-");
-    const auto name = prefix + QString::fromLatin1(identity);
+    const auto name = QStringLiteral("swiftify-") + QString::fromLatin1(identity);
 #ifdef Q_OS_LINUX
     // Keep the endpoint beside its lock in the user-owned runtime directory.
     return QDir(directory).filePath(name);
@@ -75,9 +73,9 @@ bool knownCommand(const QByteArray &command)
 
 } // namespace
 
-SingleInstance::SingleInstance(Mode mode, bool spotifyEnabled, QObject *parent)
+SingleInstance::SingleInstance(bool spotifyEnabled, QObject *parent)
     : QObject(parent)
-    , m_serverName(serverName(mode))
+    , m_serverName(serverName())
     , m_mode(spotifyEnabled ? "spotify" : "local")
     , m_lock(QDir(runtimeDirectory()).filePath(m_serverName + QStringLiteral(".lock")))
 {

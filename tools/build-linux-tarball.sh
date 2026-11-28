@@ -32,7 +32,7 @@ set -euo pipefail
 QT=""
 OUT="dist"
 JOBS="$(nproc 2>/dev/null || echo 4)"
-TEST_MODE=none
+TESTING=OFF
 SPOTIFY=ON
 
 while [[ $# -gt 0 ]]; do
@@ -40,8 +40,7 @@ while [[ $# -gt 0 ]]; do
         --qt) QT="$2"; shift 2 ;;
         --out) OUT="$2"; shift 2 ;;
         --jobs) JOBS="$2"; shift 2 ;;
-        --test-youtube) TEST_MODE=youtube; shift ;;
-        --test) TEST_MODE=all; shift ;;
+        --test) TESTING=ON; shift ;;
         --without-spotify) SPOTIFY=OFF; shift ;;
         -h|--help)
             sed -n '2,12p' "$0" | sed 's/^# \{0,1\}//'
@@ -125,25 +124,14 @@ build_dependency qcoro https://github.com/qcoro/qcoro.git 98f23d8d8d67e9e24217d2
     -DUSE_QT_VERSION=6 -DQCORO_WITH_QTDBUS=OFF -DQCORO_WITH_QTWEBSOCKETS=OFF -DQCORO_WITH_QTQUICK=OFF \
     -DQCORO_WITH_QML=OFF -DQCORO_WITH_QTTEST=OFF -DQCORO_BUILD_EXAMPLES=OFF -DBUILD_TESTING=OFF
 
-testing=OFF
-if [[ "$TEST_MODE" != none ]]; then testing=ON; fi
 cmake -S "$SOURCE" -B "$WORK/swiftify" "${common[@]}" -DCMAKE_INSTALL_PREFIX=/usr \
-    -DSWIFTIFY_BUNDLED_QT=ON -DENABLE_SPOTIFY="$SPOTIFY" -DBUILD_TESTING="$testing"
-case "$TEST_MODE" in
-    all)
-        cmake --build "$WORK/swiftify" --parallel "$JOBS"
-        LIBGL_ALWAYS_SOFTWARE=1 xvfb-run -a ctest --test-dir "$WORK/swiftify" --output-on-failure --no-tests=error
-        ;;
-    youtube)
-        cmake --build "$WORK/swiftify" --target swiftify tst_youtubeapi tst_googleauthorization tst_youtubeview \
-            tst_local tst_playback tst_discord --parallel "$JOBS"
-        ctest --test-dir "$WORK/swiftify" --output-on-failure --no-tests=error \
-            -R 'tst_(youtubeapi|googleauthorization|youtubeview|local|playback|discord)|translations_catalog|qml_statements|icon_names'
-        ;;
-    none)
-        cmake --build "$WORK/swiftify" --target swiftify --parallel "$JOBS"
-        ;;
-esac
+    -DSWIFTIFY_BUNDLED_QT=ON -DENABLE_SPOTIFY="$SPOTIFY" -DBUILD_TESTING="$TESTING"
+if [[ "$TESTING" == ON ]]; then
+    cmake --build "$WORK/swiftify" --parallel "$JOBS"
+    LIBGL_ALWAYS_SOFTWARE=1 xvfb-run -a ctest --test-dir "$WORK/swiftify" --output-on-failure --no-tests=error
+else
+    cmake --build "$WORK/swiftify" --target swiftify --parallel "$JOBS"
+fi
 rm -rf "${APPDIR:?}"
 DESTDIR="$APPDIR" cmake --install "$WORK/swiftify"
 
@@ -167,7 +155,7 @@ export LD_LIBRARY_PATH="$DEPS/lib:$QT/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 # the linuxdeploy plugin is found next to linuxdeploy, by its name.
 # qtkeychain is named outright, linuxdeploy's own pass does not look in
 # LD_LIBRARY_PATH and drops a library it cannot find without a word
-deploy_libraries=(--library "$QT/lib/libQt6NetworkAuth.so.6")
+deploy_libraries=()
 if [[ "$SPOTIFY" == ON ]]; then deploy_libraries+=(--library "$DEPS/lib/libqt6keychain.so.1"); fi
 PATH="$WORK/tools:$PATH" "$WORK/tools/linuxdeploy-x86_64.AppImage" \
     --appdir "$APPDIR" --executable "$APPDIR/usr/bin/swiftify" \
@@ -181,7 +169,7 @@ PATH="$WORK/tools:$PATH" "$WORK/tools/linuxdeploy-x86_64.AppImage" \
 [[ -f "$APPDIR/usr/plugins/tls/libqopensslbackend.so" ]] || fail "the openssl tls plugin is missing"
 [[ -f "$APPDIR/usr/share/licenses/swiftify/LICENSE" ]] || fail "the license is missing"
 for license in material-color-utilities.LICENSE rounded-polygon-qmljs.LICENSE material-symbols.LICENSE \
-    rust-crates.LICENSE build-provenance.txt qt.LICENSE qt.NOTICE qcoro.LICENSE YouTubeBrand.NOTICE; do
+    rust-crates.LICENSE build-provenance.txt qt.LICENSE qt.NOTICE qcoro.LICENSE; do
     [[ -f "$APPDIR/usr/share/licenses/swiftify/$license" ]] || fail "$license is missing"
 done
 

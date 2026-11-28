@@ -321,6 +321,44 @@ private slots:
         QCOMPARE(selection->property("text").toString(), QStringLiteral("Interface language"));
     }
 
+    void japaneseLanguageSelectionFitsNarrowSettings()
+    {
+        Rig rig;
+        rig.settings.setLanguage(QStringLiteral("en"));
+        Translations translations(&rig.settings);
+        connect(&translations, &Translations::languageChanged, &rig.engine, &QQmlEngine::retranslate);
+        const auto pages = rig.show(QStringLiteral("SettingsPages"));
+        QVERIFY(pages);
+        pages->setProperty("page", 4);
+        pages->setWidth(302);
+
+        auto *selection = pages->findChild<QQuickItem *>(QStringLiteral("languageSelection"));
+        QVERIFY(selection);
+        QVERIFY(QMetaObject::invokeMethod(selection, "activated", Q_ARG(int, 4)));
+        QCOMPARE(rig.settings.language(), QStringLiteral("ja"));
+        QCOMPARE(selection->property("text").toString(), QStringLiteral("表示言語"));
+        Rig::settle();
+        QVERIFY(!rig.render().isNull());
+
+        auto *title = selection->findChild<QQuickItem *>(QStringLiteral("selectionLabel"));
+        QVERIFY(title);
+        QVERIFY(title->property("contentWidth").toReal() <= title->width() + 1);
+        QList<QQuickItem *> labels;
+        QList<QQuickItem *> queue{selection};
+        for (qsizetype index = 0; index < queue.size(); ++index) {
+            auto *item = queue.at(index);
+            queue.append(item->childItems());
+            if (item->objectName() == QLatin1StringView("segmentLabel")) labels.append(item);
+        }
+        QCOMPARE(labels.size(), 5);
+        QCOMPARE(labels.constLast()->property("text").toString(), QLocale(QStringLiteral("ja_JP")).nativeLanguageName());
+        for (auto *label : labels) {
+            const auto left = label->mapToItem(selection, QPointF(0, 0)).x();
+            QVERIFY(left >= 0 && left + label->width() <= selection->width());
+            QVERIFY(label->property("contentWidth").toReal() <= label->width() + 1);
+        }
+    }
+
     void disabledGermanIsGrayedOutWithTooltipAndSwitchesBackToEnglish()
     {
         if (!kGermanTranslationEnabled) {
@@ -350,7 +388,7 @@ private slots:
         QCOMPARE(selection->property("currentIndex").toInt(), 1);
 
         QQmlListReference segments(selection, "segments");
-        QCOMPARE(segments.count(), 4);
+        QCOMPARE(segments.count(), 5);
         QObject *germanSegment = segments.at(3);
         QVERIFY(germanSegment);
         QCOMPARE(germanSegment->property("enabled").toBool(), false);
@@ -384,7 +422,7 @@ private slots:
         QCOMPARE(selection->property("currentIndex").toInt(), 1);
 
         QQmlListReference segments(selection, "segments");
-        QCOMPARE(segments.count(), 4);
+        QCOMPARE(segments.count(), 5);
         QObject *russianSegment = segments.at(2);
         QVERIFY(russianSegment);
         QCOMPARE(russianSegment->property("enabled").toBool(), false);

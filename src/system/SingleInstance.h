@@ -25,16 +25,15 @@
 
 namespace swiftify {
 
-/// one swiftify per user and mode. a second launch hands its command to the first and
+/// one swiftify per user. a second launch hands its command to the first and
 /// exits: no command raises the window, and the others are for compositor
 /// key binds (`swiftify --immersive`, `swiftify --play-pause`).
 class SingleInstance : public QObject {
     Q_OBJECT
 
 public:
-    enum class Mode { Playback, Catalogue };
     enum class Start { Primary, Forwarded, Failed };
-    explicit SingleInstance(Mode mode, bool spotifyEnabled = false, QObject *parent = nullptr);
+    explicit SingleInstance(bool spotifyEnabled, QObject *parent = nullptr);
 
     Start start(const QStringList &arguments, bool requirePlaybackMode = false);
     /// the command a launch's arguments ask for; "raise" without one

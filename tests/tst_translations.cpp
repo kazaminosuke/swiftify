@@ -219,6 +219,28 @@ private slots:
                  QStringLiteral("Could not create a playlist"));
     }
 
+    void japaneseUsesOnePluralFormAndPersists()
+    {
+        QTemporaryDir directory;
+        QVERIFY(directory.isValid());
+        const auto path = directory.filePath(QStringLiteral("settings.ini"));
+        {
+            Settings settings(path);
+            Translations translations(&settings);
+            settings.setLanguage(QStringLiteral("ja"));
+            QCOMPARE(QLocale().language(), QLocale::Japanese);
+            QCOMPARE(QCoreApplication::translate("test", "Settings"), QStringLiteral("設定"));
+            for (int count : {0, 1, 2, 21}) {
+                QCOMPARE(QCoreApplication::translate("Format", "%n songs", nullptr, count),
+                         QStringLiteral("%1 曲").arg(count));
+            }
+        }
+        Settings settings(path);
+        QCOMPARE(settings.language(), QStringLiteral("ja"));
+        Translations translations(&settings);
+        QCOMPARE(QCoreApplication::translate("test", "Settings"), QStringLiteral("設定"));
+    }
+
     void disabledLanguageFallsBackToEnglishAndShowsError()
     {
         const auto restore = qScopeGuard([] { Translations::resetLanguageEnabled(); });

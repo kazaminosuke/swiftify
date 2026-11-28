@@ -20,7 +20,7 @@ cmake_minimum_required(VERSION 3.24)
 
 project(Swiftify
     VERSION 0.26.2
-    DESCRIPTION "A native Spotify client"
+    DESCRIPTION "A native desktop music player"
     LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
@@ -81,15 +81,6 @@ if(SWIFTIFY_DESKTOP_INTEGRATION)
 endif()
 if(SWIFTIFY_SOLOIST)
     find_package(Qt6 6.12.1 REQUIRED COMPONENTS WebSockets)
-endif()
-if(SWIFTIFY_IS_LINUX OR WIN32)
-    set(SWIFTIFY_YOUTUBE_DEFAULT ON)
-else()
-    set(SWIFTIFY_YOUTUBE_DEFAULT OFF)
-endif()
-option(SWIFTIFY_YOUTUBE_CLIENT "Build the YouTube client" ${SWIFTIFY_YOUTUBE_DEFAULT})
-if(SWIFTIFY_YOUTUBE_CLIENT)
-    find_package(Qt6 6.12.1 REQUIRED COMPONENTS NetworkAuth)
 endif()
 if(ENABLE_SPOTIFY)
     find_package(Qt6Keychain REQUIRED)
@@ -250,10 +241,6 @@ endif()
 # with them. a distro's package uses the system's and leaves them off
 option(SWIFTIFY_BUNDLED_QT "Install the licences of Qt, QtKeychain and QCoro, for a build that bundles them" OFF)
 if(SWIFTIFY_BUNDLED_QT)
-    if(SWIFTIFY_YOUTUBE_CLIENT)
-        set(SWIFTIFY_QT_NETWORKAUTH_NOTICE
-            "Qt Network Authorization is distributed under the GNU General Public License version 3. See LICENSE. Its source is in the Qt source archive linked above.")
-    endif()
     configure_file(packaging/licenses/qt.NOTICE.in ${SWIFTIFY_LICENSE_DIRECTORY}/qt.NOTICE @ONLY)
     list(APPEND SWIFTIFY_THIRD_PARTY_LICENSES
         ${CMAKE_CURRENT_SOURCE_DIR}/packaging/licenses/qt.LICENSE
@@ -269,9 +256,6 @@ endif()
 file(GLOB_RECURSE SWIFTIFY_SOURCES CONFIGURE_DEPENDS RELATIVE ${CMAKE_CURRENT_SOURCE_DIR}
     src/*.cpp src/*.h src/*.mm)
 list(REMOVE_ITEM SWIFTIFY_SOURCES src/main.cpp)
-if(NOT SWIFTIFY_YOUTUBE_CLIENT)
-    list(FILTER SWIFTIFY_SOURCES EXCLUDE REGEX "^src/youtube/(GoogleAuthorization|YouTubeController)")
-endif()
 if(NOT APPLE)
     list(FILTER SWIFTIFY_SOURCES EXCLUDE REGEX "^src/system/macos/")
 endif()
@@ -303,15 +287,6 @@ endif()
 file(GLOB_RECURSE SWIFTIFY_QML CONFIGURE_DEPENDS RELATIVE ${CMAKE_CURRENT_SOURCE_DIR}
     qml/*.qml)
 set(SWIFTIFY_QML_RESOURCES resources/swiftify-icon.png resources/cameo.png)
-if(SWIFTIFY_YOUTUBE_CLIENT)
-    list(APPEND SWIFTIFY_QML_RESOURCES
-        resources/youtube/developed-with-youtube-dark.png
-        resources/youtube/developed-with-youtube-light.png)
-    install(FILES resources/youtube/NOTICE.md
-        DESTINATION ${CMAKE_INSTALL_DATADIR}/licenses/swiftify RENAME YouTubeBrand.NOTICE)
-else()
-    list(REMOVE_ITEM SWIFTIFY_QML qml/YouTubeWindow.qml)
-endif()
 file(GLOB SWIFTIFY_SINGLETONS CONFIGURE_DEPENDS RELATIVE ${CMAKE_CURRENT_SOURCE_DIR}
     qml/design/*.qml)
 set_source_files_properties(${SWIFTIFY_SINGLETONS} PROPERTIES QT_QML_SINGLETON_TYPE TRUE)
@@ -323,7 +298,7 @@ qt_add_library(swiftify_app STATIC)
 qt_add_resources(swiftify_app "swiftify_translations"
     PREFIX "/translations"
     BASE translations
-    FILES translations/ru.json translations/de.json)
+    FILES translations/ru.json translations/de.json translations/ja.json)
 qt_add_qml_module(swiftify_app
     URI Swiftify
     VERSION 0.26.2
@@ -396,9 +371,6 @@ target_compile_definitions(swiftify_app PUBLIC $<$<BOOL:${SWIFTIFY_SOLOIST}>:SWI
 if(TARGET Qt6::DBus)
     target_link_libraries(swiftify_app PUBLIC Qt6::DBus)
 endif()
-if(SWIFTIFY_YOUTUBE_CLIENT)
-    target_link_libraries(swiftify_app PRIVATE Qt6::NetworkAuth)
-endif()
 if(SWIFTIFY_SOLOIST)
     target_link_libraries(swiftify_app PUBLIC Qt6::WebSockets)
 endif()
@@ -459,7 +431,6 @@ if(WIN32)
 endif()
 
 qt_add_executable(swiftify src/main.cpp)
-target_compile_definitions(swiftify PRIVATE $<$<BOOL:${SWIFTIFY_YOUTUBE_CLIENT}>:SWIFTIFY_HAS_YOUTUBE_CLIENT>)
 target_link_libraries(swiftify PRIVATE swiftify_app swiftify_appplugin)
 if(SWIFTIFY_IS_LINUX)
     target_link_libraries(swiftify PRIVATE Qt6::Widgets)
