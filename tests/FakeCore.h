@@ -26,6 +26,7 @@
 #include <QCoroSignal>
 #include <QElapsedTimer>
 #include <QHash>
+#include <QPointer>
 #include <QSet>
 #include <QStringList>
 
@@ -202,11 +203,12 @@ public:
 private:
     QCoro::Task<QString> await(QString name, QString argument)
     {
+        const QPointer<FakeCore> owner(this);
         log << (argument.isEmpty() ? name : name + u' ' + argument);
         const auto call = std::make_shared<PendingCall>(name, argument);
         pending.append(call);
         const auto [ok, cancelled, payload] = co_await qCoro(call.get(), &PendingCall::finished);
-        if (cancelled) {
+        if (!owner || cancelled) {
             throw Cancelled();
         }
         if (!ok) {
