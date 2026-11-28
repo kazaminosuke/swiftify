@@ -63,7 +63,7 @@ struct ViewRig {
     MemoryCredentialStore credentials;
     QNetworkAccessManager network;
     FakeCore core;
-    SpotifySession session {&core, &credentials, &network, &errors};
+    SpotifySession session;
     PlaybackController player {&core, &session, &settings, &errors};
     DiscordPresence discord {&player, &settings};
     LibraryStore library {&session, &settings, &errors};
@@ -88,7 +88,8 @@ struct ViewRig {
     std::unique_ptr<QRhiRenderPassDescriptor> pass;
     bool gpu = false;
 
-    ViewRig()
+    explicit ViewRig(bool spotifyEnabled = true)
+        : session(&core, &credentials, &network, &errors, nullptr, spotifyEnabled)
     {
         // the tray's menu is native, and the platform tests run on has none
         settings.setTrayIcon(false);

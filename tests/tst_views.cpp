@@ -1198,9 +1198,20 @@ private slots:
         QCOMPARE(focusItem->property("text").toString(), QStringLiteral("Save"));
     }
 
+    void everySettingsPageDraws_data()
+    {
+        QTest::addColumn<bool>("spotifyEnabled");
+        QTest::newRow("local") << false;
+#ifdef SWIFTIFY_HAS_SPOTIFY
+        QTest::newRow("spotify") << true;
+#endif
+    }
+
     void everySettingsPageDraws()
     {
-        Rig rig;
+        QFETCH(bool, spotifyEnabled);
+        Rig rig(spotifyEnabled);
+        QCOMPARE(rig.session.isEnabled(), spotifyEnabled);
         const auto pages = rig.show(QStringLiteral("SettingsPages"));
         QVERIFY(pages);
         // visualizer to performance, account, about
@@ -1208,7 +1219,11 @@ private slots:
             pages->setProperty("page", page);
             Rig::settle();
             rig.render();
-            QVERIFY2(pages->implicitHeight() > 100, qPrintable(QString::number(page)));
+            if (page == 6 && !spotifyEnabled) {
+                QCOMPARE(pages->implicitHeight(), 0.0);
+            } else {
+                QVERIFY2(pages->implicitHeight() > 100, qPrintable(QString::number(page)));
+            }
         }
 
         // the account's page holds what the sidebar's card did
@@ -1228,10 +1243,10 @@ private slots:
         };
         for (const QString &action : {QStringLiteral("Connect Library"), QStringLiteral("Connect Playback"),
                                       QStringLiteral("Log Out")}) {
-            QVERIFY2(shown(pages.get(), action), qPrintable(action));
+            QCOMPARE(bool(shown(pages.get(), action)), spotifyEnabled);
         }
         // with nobody signed in, there is nobody to log out
-        QVERIFY(!shown(pages.get(), QStringLiteral("Log Out"))->isEnabled());
+        if (spotifyEnabled) QVERIFY(!shown(pages.get(), QStringLiteral("Log Out"))->isEnabled());
     }
 
     /// the foot of the sidebar opens the settings, where the account now is
@@ -3296,24 +3311,27 @@ private slots:
         QVERIFY2(object, qPrintable(component.errorString()));
         auto *window = qobject_cast<QQuickWindow *>(object.get());
         QVERIFY(window);
+        QVERIFY(QTest::qWaitForWindowExposed(window));
         QCOMPARE(window->minimumWidth(), 526);
         QCOMPARE(window->minimumHeight(), 410);
         window->setWidth(1000);
-        Rig::settle();
-        QVERIFY(window->property("rightPanelFits").toBool());
+        QTRY_COMPARE(window->width(), 1000);
+        QTRY_VERIFY(window->property("rightPanelFits").toBool());
         rig.player.setShowingLyrics(true);
         QVERIFY(rig.player.isShowingLyrics());
         // 980 - 232 sidebar - 320 inspector - 32 gutters = 396 points.
         window->setWidth(980);
-        Rig::settle();
-        QVERIFY(!rig.player.isShowingLyrics());
+        QTRY_COMPARE(window->width(), 980);
+        QTRY_VERIFY(!window->property("rightPanelFits").toBool());
+        QTRY_VERIFY(!rig.player.isShowingLyrics());
         QVERIFY(!rig.player.isShowingQueue());
         window->setWidth(526);
+        QTRY_COMPARE(window->width(), 526);
         rig.player.setShowingQueue(true);
-        Rig::settle();
-        QVERIFY(!rig.player.isShowingQueue());
+        QTRY_VERIFY(!rig.player.isShowingQueue());
         window->setWidth(1000);
-        Rig::settle();
+        QTRY_COMPARE(window->width(), 1000);
+        QTRY_VERIFY(window->property("rightPanelFits").toBool());
         QVERIFY(!rig.player.isShowingLyrics());
         QVERIFY(!rig.player.isShowingQueue());
     }

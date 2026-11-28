@@ -17,7 +17,7 @@
 
 # build-debian.sh - Build and install swiftify on Debian/Ubuntu
 #
-# Handles Qt 6.8 and 6.9 by patching out the QML features that need a newer Qt.
+# Requires Qt 6.12.1 or newer. Set CMAKE_PREFIX_PATH to select a Qt kit.
 # Run from the repository root or pass the repo path as an argument.
 #
 # Usage:
@@ -86,62 +86,11 @@ if $INSTALL_DEPS; then
         libssl-dev cmake ninja-build pkg-config
 fi
 
-# Detect Qt version
-QT_VERSION=$(pkg-config --modversion Qt6Core 2>/dev/null || echo "0")
-QT_MAJOR=$(echo "$QT_VERSION" | cut -d. -f1)
-QT_MINOR=$(echo "$QT_VERSION" | cut -d. -f2)
-
-log "Detected Qt version: $QT_VERSION"
-
-# patch out what this qt is too old for
-apply_compat_patches() {
-    log "Applying Qt $QT_VERSION compatibility patches..."
-
-    # Patch CMakeLists.txt version requirements
-    sed -i 's/Qt6 6\.10/Qt6 6.8/g' CMakeLists.txt
-    sed -i 's/REQUIRES 6\.10/REQUIRES 6.8/g' CMakeLists.txt
-
-    # the final property modifier needs qt 6.10
-    find qml -name "*.qml" -exec sed -i \
-        -e 's/final readonly property/readonly property/g' \
-        -e 's/final property/property/g' {} \;
-
-    # ApplicationWindow padding needs qt 6.9
-    if [[ "$QT_MINOR" -lt 9 ]] && grep -q "bottomPadding: 0" qml/Main.qml 2>/dev/null; then
-        sed -i '/topPadding: 0/d; /leftPadding: 0/d; /rightPadding: 0/d; /bottomPadding: 0/d' qml/Main.qml
-        # Also remove the comment about Qt 6.9
-        sed -i '/since qt 6.9/,/clear itself/d' qml/Main.qml
-    fi
-
-    log "Qt $QT_VERSION patches applied"
-}
-
-# Check if patches are needed
-YOUTUBE_CLIENT=ON
-if [[ "$QT_MAJOR" -eq 6 ]] && [[ "$QT_MINOR" -lt 10 ]]; then
-    YOUTUBE_CLIENT=OFF
-    warn "The YouTube client requires Qt 6.10 or newer. Building the upstream mode on Qt $QT_VERSION."
-    warn "Qt $QT_VERSION detected (< 6.10). Applying compatibility patches..."
-    apply_compat_patches
-elif [[ "$QT_MAJOR" -lt 6 ]]; then
-    error "Qt 6.8+ is required, but Qt $QT_VERSION was found"
-fi
-
-# Clean previous build if it exists with different Qt version
-if [[ -d build ]]; then
-    BUILD_QT=$(grep -o 'Qt6_VERSION "[^"]*"' build/CMakeCache.txt 2>/dev/null | cut -d'"' -f2 || echo "")
-    if [[ -n "$BUILD_QT" ]] && [[ "$BUILD_QT" != "$QT_VERSION" ]]; then
-        warn "Previous build used Qt $BUILD_QT, cleaning..."
-        rm -rf build
-    fi
-fi
-
 # Configure
 log "Configuring build..."
 cmake -S . -B build -G Ninja \
     -DCMAKE_BUILD_TYPE=Release \
     -DBUILD_TESTING=OFF \
-    -DSWIFTIFY_YOUTUBE_CLIENT="$YOUTUBE_CLIENT" \
     -DCMAKE_INSTALL_PREFIX="$PREFIX"
 
 # Build

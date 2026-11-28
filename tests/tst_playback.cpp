@@ -26,8 +26,10 @@
 #include "playback/PlaybackController.h"
 #include "playback/PlaybackState.h"
 #include "spotify/CredentialStore.h"
+#include "spotify/SpotifyError.h"
 #include "spotify/SpotifySession.h"
 #if defined(SWIFTIFY_HAS_DBUS) && defined(Q_OS_LINUX)
+#include "audio/AudioShaping.h"
 #include "system/dbus/Mpris.h"
 #endif
 
@@ -88,6 +90,11 @@ private:
         {
         }
 
+        QString playbackKey() const
+        {
+            return session.isEnabled() ? QStringLiteral("lastPlaybackState") : QStringLiteral("localPlaybackStateV1");
+        }
+
         /// lets the song the player asked for finish loading
         void finishLoading()
         {
@@ -112,21 +119,25 @@ private slots:
     {
         RustCore core;
         const auto original = core.generation();
-        int finished = 0;
+        int failed = 0;
+        int cancelled = 0;
         const auto request = [&]() -> QCoro::Task<> {
             try {
                 co_await core.lyricsJson(QStringLiteral("spotify:track:0000000000000000000000"));
+            } catch (const Cancelled &) {
+                ++cancelled;
             } catch (const std::exception &) {
                 core.reset();
-                ++finished;
+                ++failed;
             }
         };
         detach(request());
-        QTRY_COMPARE(finished, 1);
+        QTRY_COMPARE(failed, 1);
         QCOMPARE(core.generation(), original + 1);
         detach(request());
         core.reset();
-        QTRY_COMPARE(finished, 2);
+        QTRY_COMPARE(cancelled, 1);
+        QCOMPARE(failed, 1);
         QCOMPARE(core.generation(), original + 2);
     }
 
@@ -142,8 +153,8 @@ private slots:
             rig.finishLoading();
             rig.core.duration = 200000;
             rig.player.seek(42000);
-            QTRY_VERIFY(rig.settings.contains(QStringLiteral("lastPlaybackState")));
-            QTRY_COMPARE(playbackstate::decode(rig.settings.value(QStringLiteral("lastPlaybackState")).toByteArray())->positionMs, 42000u);
+            QTRY_VERIFY(rig.settings.contains(rig.playbackKey()));
+            QTRY_COMPARE(playbackstate::decode(rig.settings.value(rig.playbackKey()).toByteArray())->positionMs, 42000u);
             QVERIFY(rig.player.isPlaying());
         }
         {
@@ -230,7 +241,7 @@ private slots:
             QCOMPARE(rig.core.position, 30000u);
             QVERIFY(QMetaObject::invokeMethod(&rig.session, "loggedOut"));
             QVERIFY(!rig.player.hasSong());
-            QVERIFY(!rig.settings.contains(QStringLiteral("lastPlaybackState")));
+            QVERIFY(!rig.settings.contains(rig.playbackKey()));
         }
         Rig next(path);
         QVERIFY(!next.player.hasSong());
@@ -882,6 +893,12 @@ private slots:
         rig.finishLoading();
         QSignalSpy loggedOut(&rig.session, &SpotifySession::loggedOut);
         rig.session.logOut();
+        if (!rig.session.isEnabled()) {
+            QCOMPARE(loggedOut.count(), 0);
+            QVERIFY(rig.player.isPlaying());
+            QCOMPARE(rig.player.activeQueue().size(), 2);
+            return;
+        }
         QTRY_COMPARE(loggedOut.count(), 1);
         QVERIFY(!rig.player.hasSong());
         QVERIFY(!rig.player.isPlaying());
@@ -892,7 +909,8 @@ private slots:
     void mprisReflectsPlaybackStateAndControls()
     {
         Rig rig;
-        Mpris mpris(&rig.player);
+        AudioShaping sound(&rig.core, &rig.settings, &rig.session);
+        Mpris mpris(&rig.player, &sound);
         QCOMPARE(mpris.playbackStatus(), QStringLiteral("Stopped"));
         QVERIFY(!mpris.hasSong());
 
@@ -907,6 +925,10 @@ private slots:
         const QVariantMap metadata = mpris.metadata();
         QCOMPARE(metadata.value(QStringLiteral("xesam:title")).toString(), queue[0].name);
         QCOMPARE(metadata.value(QStringLiteral("xesam:artist")).toStringList(), QStringList {queue[0].artists});
+        QVERIFY(!metadata.contains(QStringLiteral("xesam:url")));
+        mpris.setPlaybackRate(1.25);
+        QCOMPARE(sound.tempo(), 1.25);
+        QCOMPARE(mpris.playbackRate(), 1.25);
 
         rig.player.pause();
         QCOMPARE(mpris.playbackStatus(), QStringLiteral("Paused"));

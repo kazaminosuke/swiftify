@@ -19,8 +19,8 @@
 # against a qt kit from the qt installer or aqtinstall
 #
 # usage
-#   ./tools/build-macos-dmg.sh --qt ~/Qt/6.12.0/macos
-#   ./tools/build-macos-dmg.sh --qt ~/Qt/6.12.0/macos --out dist --jobs 8
+#   ./tools/build-macos-dmg.sh --qt ~/Qt/6.12.1/macos
+#   ./tools/build-macos-dmg.sh --qt ~/Qt/6.12.1/macos --out dist --jobs 8
 #
 # needs an apple silicon mac, cmake, ninja, git, xcode or its command line
 # tools, and rust from rustup. with full xcode the icon is compiled with actool
@@ -47,7 +47,7 @@ done
 fail() { echo "error, $1" >&2; exit 1; }
 
 [[ "$(uname -s)" == Darwin && "$(uname -m)" == arm64 ]] || fail "this builds on apple silicon only"
-[[ -n "$QT" ]] || fail "pass --qt with the path of a qt 6.10 or newer macos kit"
+[[ -n "$QT" ]] || fail "pass --qt with the path of a qt 6.12.1 or newer macos kit"
 QT="$(cd "$QT" && pwd)"
 [[ -x "$QT/bin/macdeployqt" ]] || fail "no macdeployqt in $QT/bin, pass the macos folder of the kit"
 for tool in cmake ninja git cargo codesign hdiutil lipo vtool; do
@@ -84,19 +84,24 @@ common=(-G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF
 # qtkeychain and qcoro are built static against the same qt, at tags known to
 # work, so there is nothing of theirs to bundle
 build_dependency() {
-    local name="$1" url="$2" tag="$3"
+    local name="$1" url="$2" revision="$3"
     shift 3
-    if [[ ! -d "$WORK/sources/$name" ]]; then
-        git clone --quiet --depth 1 --branch "$tag" "$url" "$WORK/sources/$name"
+    local checkout="$WORK/sources/$name-$revision"
+    if [[ ! -d "$checkout/.git" ]]; then
+        git init --quiet "$checkout"
+        git -C "$checkout" fetch --quiet --depth 1 "$url" "$revision"
+        git -C "$checkout" checkout --quiet --detach FETCH_HEAD
     fi
-    cmake -S "$WORK/sources/$name" -B "$WORK/$name" "${common[@]}" -DBUILD_SHARED_LIBS=OFF \
+    [[ "$(git -C "$checkout" rev-parse HEAD)" == "$revision" ]] || fail "$name source differs from its pinned commit"
+    [[ -z "$(git -C "$checkout" status --porcelain)" ]] || fail "$name source has local modifications"
+    cmake -S "$checkout" -B "$WORK/$name" "${common[@]}" -DBUILD_SHARED_LIBS=OFF \
         "-DCMAKE_INSTALL_PREFIX=$DEPS" -DCMAKE_INSTALL_LIBDIR=lib "$@"
     cmake --build "$WORK/$name" --parallel "$JOBS"
     cmake --install "$WORK/$name"
 }
-build_dependency qtkeychain https://github.com/frankosterfeld/qtkeychain.git 0.17.0 \
+build_dependency qtkeychain https://github.com/frankosterfeld/qtkeychain.git 875f77d9f61bd97fd84cca47ce3bc71186dfbd09 \
     -DBUILD_WITH_QT5=OFF -DBUILD_WITH_QT6=ON -DBUILD_TEST_APPLICATION=OFF -DBUILD_TRANSLATIONS=OFF
-build_dependency qcoro https://github.com/qcoro/qcoro.git v0.13.0 \
+build_dependency qcoro https://github.com/qcoro/qcoro.git 98f23d8d8d67e9e24217d268927faec97c713fb0 \
     -DUSE_QT_VERSION=6 -DQCORO_WITH_QTDBUS=OFF -DQCORO_WITH_QTWEBSOCKETS=OFF -DQCORO_WITH_QTQUICK=OFF \
     -DQCORO_WITH_QML=OFF -DQCORO_WITH_QTTEST=OFF -DQCORO_BUILD_EXAMPLES=OFF -DBUILD_TESTING=OFF
 
@@ -149,7 +154,7 @@ done < <(find "$APP" -type f -print0)
 [[ -d "$APP/Contents/Resources/qml/QtQuick" ]] || fail "qt's qml modules are missing"
 [[ -f "$APP/Contents/Resources/LICENSE" ]] || fail "the license is missing"
 for license in material-color-utilities.LICENSE rounded-polygon-qmljs.LICENSE material-symbols.LICENSE \
-    rust-crates.LICENSE qt.LICENSE qt.NOTICE qtkeychain.LICENSE qcoro.LICENSE; do
+    rust-crates.LICENSE build-provenance.txt qt.LICENSE qt.NOTICE qtkeychain.LICENSE qcoro.LICENSE; do
     [[ -f "$APP/Contents/Resources/$license" ]] || fail "$license is missing"
 done
 
