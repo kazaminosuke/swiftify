@@ -12,7 +12,6 @@
 #include <QSignalSpy>
 #include <QTemporaryDir>
 #include <QTest>
-#include <QUrlQuery>
 #include <QtQml/qqmlextensionplugin.h>
 
 Q_IMPORT_QML_PLUGIN(SwiftifyPlugin)
@@ -24,13 +23,13 @@ class YouTubeViewTest : public QObject {
 
 private slots:
     void captureUrl(const QUrl &url) { m_openedUrl = url; }
-    void searchAndPlaybackUseTheOfficialBrowser();
+    void unconfiguredSearchStaysInTheNativeWindow();
 
 private:
     QUrl m_openedUrl;
 };
 
-void YouTubeViewTest::searchAndPlaybackUseTheOfficialBrowser()
+void YouTubeViewTest::unconfiguredSearchStaysInTheNativeWindow()
 {
     qunsetenv("SWIFTIFY_YOUTUBE_API_KEY");
     qunsetenv("SWIFTIFY_GOOGLE_CLIENT_ID");
@@ -61,17 +60,12 @@ void YouTubeViewTest::searchAndPlaybackUseTheOfficialBrowser()
     QVERIFY(!button->property("enabled").toBool());
     const QString query = QStringLiteral("a+b & 日本語");
     QVERIFY(field->setProperty("text", query));
-    QVERIFY(button->property("enabled").toBool());
-    QVERIFY(QMetaObject::invokeMethod(button, "clicked"));
-    QCOMPARE(m_openedUrl.host(), QStringLiteral("music.youtube.com"));
-    QCOMPARE(m_openedUrl.path(), QStringLiteral("/search"));
-    QCOMPARE(QUrlQuery(m_openedUrl).queryItemValue(QStringLiteral("q"), QUrl::FullyDecoded), query);
-    QVERIFY(m_openedUrl.toEncoded().contains("q=a%2Bb"));
-
-    music.play(QStringLiteral("dQw4w9WgXcQ"));
-    QCOMPARE(m_openedUrl.toString(), QStringLiteral("https://music.youtube.com/watch?v=dQw4w9WgXcQ"));
-    music.play(QStringLiteral("invalid"));
-    QCOMPARE(m_openedUrl.path(), QStringLiteral("/watch"));
+    QVERIFY(!button->property("enabled").toBool());
+    music.search(query);
+    QVERIFY(!music.error().isEmpty());
+    QVERIFY(m_openedUrl.isEmpty());
+    music.setSearchKind(youtube::YouTubeController::Channels);
+    QCOMPARE(music.searchKind(), youtube::YouTubeController::Channels);
     QCoreApplication::processEvents();
     QCOMPARE(warnings.size(), 0);
 }

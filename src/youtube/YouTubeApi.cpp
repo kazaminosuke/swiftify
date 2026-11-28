@@ -49,12 +49,6 @@ bool validVideoId(const QString &id)
     return format.match(id).hasMatch();
 }
 
-bool validPlaylistId(const QString &id)
-{
-    static const QRegularExpression format(QStringLiteral("\\A[A-Za-z0-9_-]{1,128}\\z"));
-    return format.match(id).hasMatch();
-}
-
 QString searchText(QString text)
 {
     // Search snippets may contain HTML entities. Treat literal markup as text.
@@ -81,13 +75,20 @@ Item parseItem(Collection collection, const QJsonObject &object)
     const QJsonObject snippet = object.value(QStringLiteral("snippet")).toObject();
     const auto string = [&snippet](QLatin1StringView key) { return snippet.value(key).toString(); };
     Item result{object.value(QStringLiteral("id")).toString(), string(QLatin1StringView("title")),
-                string(QLatin1StringView("channelTitle")), thumbnail(snippet)};
+                string(QLatin1StringView("channelTitle")), thumbnail(snippet),
+                string(QLatin1StringView("description"))};
     switch (collection) {
     case Collection::Search:
-        result.id = object.value(QStringLiteral("id")).toObject().value(QStringLiteral("videoId")).toString();
+    case Collection::SearchChannels:
+    case Collection::SearchPlaylists: {
+        const char *field = collection == Collection::Search ? "videoId"
+            : collection == Collection::SearchChannels ? "channelId" : "playlistId";
+        result.id = object.value(QStringLiteral("id")).toObject().value(QLatin1StringView(field)).toString();
         result.title = searchText(result.title);
         result.channel = searchText(result.channel);
+        result.description = searchText(result.description);
         break;
+    }
     case Collection::Likes:
         if (string(QLatin1StringView("categoryId")) != musicCategory) return {};
         break;
@@ -123,11 +124,18 @@ QNetworkReply *Api::fetch(Collection collection, const QString &value, const QSt
     QString path;
     switch (collection) {
     case Collection::Search:
+    case Collection::SearchChannels:
+    case Collection::SearchPlaylists: {
         path = QStringLiteral("search");
-        query.addQueryItem(QStringLiteral("type"), QStringLiteral("video"));
-        query.addQueryItem(QStringLiteral("videoCategoryId"), musicCategory.toString());
+        const char *type = collection == Collection::Search ? "video"
+            : collection == Collection::SearchChannels ? "channel" : "playlist";
+        query.addQueryItem(QStringLiteral("type"), QLatin1StringView(type));
+        if (collection == Collection::Search) {
+            query.addQueryItem(QStringLiteral("videoCategoryId"), musicCategory.toString());
+        }
         query.addQueryItem(QStringLiteral("q"), QString::fromLatin1(QUrl::toPercentEncoding(value)));
         break;
+    }
     case Collection::Likes:
         path = QStringLiteral("videos");
         query.addQueryItem(QStringLiteral("myRating"), QStringLiteral("like"));
@@ -152,7 +160,7 @@ QNetworkReply *Api::fetch(Collection collection, const QString &value, const QSt
     request.setAttribute(QNetworkRequest::RedirectPolicyAttribute, QNetworkRequest::ManualRedirectPolicy);
     if (!accessToken.isEmpty()) {
         request.setRawHeader("Authorization", "Bearer " + accessToken);
-    } else if (collection == Collection::Search && !apiKey.isEmpty()) {
+    } else if (!apiKey.isEmpty() && (path == QLatin1StringView("search") || collection == Collection::PlaylistItems)) {
         request.setRawHeader("X-Goog-Api-Key", apiKey);
     }
     return m_network.get(request);
@@ -176,8 +184,9 @@ Page Api::read(QNetworkReply &reply, Collection collection)
     page.nextPage = response.value(QStringLiteral("nextPageToken")).toString();
     for (const QJsonValue entry : items.toArray()) {
         Item item = parseItem(collection, entry.toObject());
-        const bool namedCollection = collection == Collection::Playlists || collection == Collection::Channel;
-        const bool validId = namedCollection ? validPlaylistId(item.id) : validVideoId(item.id);
+        const bool namedCollection = collection == Collection::Playlists || collection == Collection::Channel
+            || collection == Collection::SearchChannels || collection == Collection::SearchPlaylists;
+        const bool validId = namedCollection ? validCollectionId(item.id) : validVideoId(item.id);
         if (validId && !item.title.isEmpty()) {
             page.items.append(std::move(item));
         }
@@ -185,24 +194,10 @@ Page Api::read(QNetworkReply &reply, Collection collection)
     return page;
 }
 
-QUrl watchUrl(const QString &videoId)
+bool validCollectionId(const QString &id)
 {
-    if (!validVideoId(videoId)) return {};
-    QUrl url(QStringLiteral("https://music.youtube.com/watch"));
-    QUrlQuery query;
-    query.addQueryItem(QStringLiteral("v"), videoId);
-    url.setQuery(query);
-    return url;
-}
-
-QUrl playlistUrl(const QString &playlistId)
-{
-    if (!validPlaylistId(playlistId)) return {};
-    QUrl url(QStringLiteral("https://www.youtube.com/playlist"));
-    QUrlQuery query;
-    query.addQueryItem(QStringLiteral("list"), playlistId);
-    url.setQuery(query);
-    return url;
+    static const QRegularExpression format(QStringLiteral("\\A[A-Za-z0-9_-]{1,128}\\z"));
+    return format.match(id).hasMatch();
 }
 
 } // namespace swiftify::youtube

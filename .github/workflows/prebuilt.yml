@@ -16,17 +16,18 @@ on:
   pull_request:
     paths:
       - .github/workflows/prebuilt.yml
-      - tools/build-windows.ps1
-      - tools/build-linux-tarball.sh
-      - tools/build-macos-dmg.sh
       - CMakeLists.txt
       - src/main.cpp
+      - src/system/SingleInstance.*
       - src/youtube/**
       - qml/YouTubeWindow.qml
       - resources/youtube/**
       - tests/tst_youtube*.cpp
       - tests/tst_googleauthorization.cpp
       - tests/check_windows_build.ps1
+      - tools/build-windows.ps1
+      - tools/build-linux-tarball.sh
+      - tools/build-macos-dmg.sh
 
 permissions:
   contents: read

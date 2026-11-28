@@ -35,8 +35,10 @@ QString SingleInstance::commandFrom(const QStringList &arguments)
     return QStringLiteral("raise");
 }
 
-SingleInstance::SingleInstance(QObject *parent)
+SingleInstance::SingleInstance(Mode mode, QObject *parent)
     : QObject(parent)
+    , m_serverName((mode == Mode::Catalogue ? QStringLiteral("swiftify-catalogue-")
+                                           : QStringLiteral("swiftify-")) + QDir::home().dirName())
 {
     connect(&m_server, &QLocalServer::newConnection, this, [this] {
         while (QLocalSocket *socket = m_server.nextPendingConnection()) {
@@ -50,15 +52,10 @@ SingleInstance::SingleInstance(QObject *parent)
     });
 }
 
-QString SingleInstance::serverName()
-{
-    return QStringLiteral("swiftify-") + QDir::home().dirName();
-}
-
 bool SingleInstance::forwardToRunningInstance(const QStringList &arguments)
 {
     QLocalSocket socket;
-    socket.connectToServer(serverName());
+    socket.connectToServer(m_serverName);
     if (!socket.waitForConnected(300)) {
         return false;
     }
@@ -71,9 +68,9 @@ bool SingleInstance::forwardToRunningInstance(const QStringList &arguments)
 void SingleInstance::listen()
 {
     // a crashed copy leaves its socket file behind; nobody is answering on it.
-    QLocalServer::removeServer(serverName());
+    QLocalServer::removeServer(m_serverName);
     m_server.setSocketOptions(QLocalServer::UserAccessOption);
-    m_server.listen(serverName());
+    m_server.listen(m_serverName);
 }
 
 } // namespace swiftify

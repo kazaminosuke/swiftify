@@ -86,7 +86,7 @@ ApplicationWindow {
             currentIndex: window.music.view === YouTubeController.Search ? 0
                 : window.music.view === YouTubeController.Likes ? 1 : 2
             segments: [
-                Segment { text: qsTr("Music videos"); symbol: "search" },
+                Segment { text: qsTr("Search"); symbol: "search" },
                 Segment {
                     text: qsTr("Liked music")
                     symbol: "favorite"
@@ -129,16 +129,27 @@ ApplicationWindow {
                         id: searchField
                         objectName: "youtubeSearchField"
                         Layout.fillWidth: true
-                        placeholder: qsTr("Search music videos")
+                        placeholder: qsTr("Search YouTube")
                         onAccepted: window.submitSearch(text)
                     }
 
                     TextButton {
                         objectName: "youtubeSearchButton"
-                        text: window.music.canSearch ? qsTr("Search") : qsTr("Search in browser")
-                        enabled: searchField.text.trim().length > 0
+                        text: qsTr("Search")
+                        enabled: window.music.canSearch && searchField.text.trim().length > 0
                         onClicked: window.submitSearch(searchField.text)
                     }
+                }
+
+                SegmentedControl {
+                    visible: window.music.view === YouTubeController.Search
+                    currentIndex: window.music.searchKind
+                    segments: [
+                        Segment { text: qsTr("Music videos") },
+                        Segment { text: qsTr("Channels") },
+                        Segment { text: qsTr("Playlists") }
+                    ]
+                    onActivated: index => window.music.searchKind = index
                 }
 
                 RowLayout {
@@ -147,8 +158,8 @@ ApplicationWindow {
 
                     IconButton {
                         symbol: "arrow_back"
-                        Accessible.name: qsTr("Back to playlists")
-                        onClicked: window.music.showPlaylists()
+                        Accessible.name: qsTr("Back to results")
+                        onClicked: window.music.leavePlaylist()
                     }
 
                     TitleText {
@@ -158,12 +169,6 @@ ApplicationWindow {
                         Layout.fillWidth: true
                     }
 
-                    TextButton {
-                        text: qsTr("Open on YouTube")
-                        symbol: "open_in_new"
-                        variant: TextButton.Tonal
-                        onClicked: window.music.openPlaylist()
-                    }
                 }
 
                 RowLayout {
@@ -225,7 +230,10 @@ ApplicationWindow {
                             required property string itemTitle
                             required property string channel
                             required property url artwork
+                            required property string description
                             readonly property bool playlist: window.music.view === YouTubeController.Playlists
+                                || (window.music.view === YouTubeController.Search
+                                    && window.music.searchKind === YouTubeController.PublicPlaylists)
 
                             width: results.width - 14
                             height: 74
@@ -285,15 +293,18 @@ ApplicationWindow {
                                 }
 
                                 TextButton {
-                                    text: entry.playlist ? qsTr("Browse") : qsTr("Play in browser")
+                                    text: entry.playlist ? qsTr("Browse") : qsTr("Details")
                                     Accessible.name: text + " " + entry.itemTitle
-                                    symbol: entry.playlist ? "chevron_right" : "open_in_new"
+                                    symbol: entry.playlist ? "chevron_right" : "info"
                                     variant: TextButton.Tonal
                                     onClicked: {
                                         if (entry.playlist) {
                                             window.music.showPlaylist(entry.itemId, entry.itemTitle)
                                         } else {
-                                            window.music.play(entry.itemId)
+                                            detailsTitle.text = entry.itemTitle
+                                            detailsText.text = entry.channel.length
+                                                ? entry.channel + "\n\n" + entry.description : entry.description
+                                            detailsDialog.open()
                                         }
                                     }
                                 }
@@ -314,9 +325,9 @@ ApplicationWindow {
                         color: Appearance.colors.onSurfaceVariant
                         visible: !window.music.loading && !window.music.error && results.count === 0
                         text: window.music.searched
-                            ? window.music.hasMore ? qsTr("No music videos on this page.") : qsTr("No results.")
-                            : window.music.canSearch ? qsTr("Search for an artist or song.")
-                            : qsTr("Search opens YouTube Music in your default browser.")
+                            ? window.music.hasMore ? qsTr("No results on this page.") : qsTr("No results.")
+                            : window.music.canSearch ? qsTr("Search to browse the YouTube catalogue.")
+                            : qsTr("Configure API access to search YouTube.")
                     }
                 }
 
@@ -371,6 +382,34 @@ ApplicationWindow {
                 onClicked: privacyDialog.open()
             }
         }
+    }
+
+    StyledDialog {
+        id: detailsDialog
+        headline: qsTr("Details")
+        preferredWidth: 500
+        StyledText {
+            id: detailsTitle
+            width: parent.width
+            font.weight: Font.DemiBold
+            textFormat: Text.PlainText
+            wrapMode: Text.Wrap
+        }
+        StyledText {
+            id: detailsText
+            width: parent.width
+            maximumLineCount: 8
+            elide: Text.ElideRight
+            textFormat: Text.PlainText
+            wrapMode: Text.Wrap
+        }
+        buttons: [
+            TextButton {
+                text: qsTr("Done")
+                variant: TextButton.Text
+                onClicked: detailsDialog.close()
+            }
+        ]
     }
 
     StyledDialog {

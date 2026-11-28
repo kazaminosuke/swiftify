@@ -61,7 +61,8 @@ private slots:
     void emptyMusicPageRetainsPagination();
     void playlistItemsUseVideoIdAndOwner();
     void reportsQuotaWithoutEchoingResponse();
-    void opensOnlyFixedOfficialUrls();
+    void rejectsInvalidCollectionIds();
+    void searchTypesHaveSeparateIdsAndFilters();
 };
 
 void YouTubeApiTest::searchUsesMusicCategoryAndKeepsCredentialsOutOfUrl()
@@ -81,6 +82,32 @@ void YouTubeApiTest::searchUsesMusicCategoryAndKeepsCredentialsOutOfUrl()
     QCOMPARE(query.queryItemValue(QStringLiteral("type")), QStringLiteral("video"));
     QCOMPARE(reply->request().rawHeader("X-Goog-Api-Key"), QByteArray("test-key"));
     QVERIFY(!url.toEncoded().contains("test-key"));
+}
+
+void YouTubeApiTest::searchTypesHaveSeparateIdsAndFilters()
+{
+    Network network;
+    const Api api(network);
+    network.body = R"({"items":[{"id":{"channelId":"UC_artist"},"snippet":{"title":"Artist","description":"Hello &amp; music"}},
+        {"id":{"playlistId":"PL_music"},"snippet":{"title":"Mix"}}]})";
+    for (const auto [collection, type, expectedId] :
+         {std::tuple{Collection::SearchChannels, "channel", "UC_artist"},
+          std::tuple{Collection::SearchPlaylists, "playlist", "PL_music"}}) {
+        const std::unique_ptr<QNetworkReply> reply(api.fetch(collection, QStringLiteral("music"), {}, {}, "test-key"));
+        const QUrlQuery query(reply->url());
+        QCOMPARE(query.queryItemValue(QStringLiteral("type")), QString::fromLatin1(type));
+        QVERIFY(!query.hasQueryItem(QStringLiteral("videoCategoryId")));
+        QCOMPARE(reply->request().rawHeader("X-Goog-Api-Key"), QByteArray("test-key"));
+        const Page page = Api::read(*reply, collection);
+        QCOMPARE(page.items.size(), 1);
+        QCOMPARE(page.items.first().id, QString::fromLatin1(expectedId));
+        if (collection == Collection::SearchChannels) {
+            QCOMPARE(page.items.first().description, QStringLiteral("Hello & music"));
+        }
+    }
+    const std::unique_ptr<QNetworkReply> playlist(api.fetch(Collection::PlaylistItems,
+        QStringLiteral("PL_music"), {}, {}, "test-key"));
+    QCOMPARE(playlist->request().rawHeader("X-Goog-Api-Key"), QByteArray("test-key"));
 }
 
 void YouTubeApiTest::authorizedCollectionsUseExpectedEndpoints()
@@ -165,14 +192,12 @@ void YouTubeApiTest::reportsQuotaWithoutEchoingResponse()
     QVERIFY(!page.error.contains(QStringLiteral("private debug data")));
 }
 
-void YouTubeApiTest::opensOnlyFixedOfficialUrls()
+void YouTubeApiTest::rejectsInvalidCollectionIds()
 {
-    QCOMPARE(watchUrl(QStringLiteral("dQw4w9WgXcQ")).toString(),
-             QStringLiteral("https://music.youtube.com/watch?v=dQw4w9WgXcQ"));
-    QCOMPARE(playlistUrl(QStringLiteral("PL_123")).toString(),
-             QStringLiteral("https://www.youtube.com/playlist?list=PL_123"));
-    QVERIFY(watchUrl(QStringLiteral("https://example.org/")).isEmpty());
-    QVERIFY(playlistUrl(QStringLiteral("PL_123&x=y")).isEmpty());
+    QVERIFY(validCollectionId(QStringLiteral("PL_123")));
+    QVERIFY(validCollectionId(QStringLiteral("UC-test")));
+    QVERIFY(!validCollectionId(QStringLiteral("https://example.org/")));
+    QVERIFY(!validCollectionId(QStringLiteral("PL_123&x=y")));
 }
 
 QTEST_MAIN(YouTubeApiTest)

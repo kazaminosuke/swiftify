@@ -18,8 +18,11 @@ class YouTubeController : public QObject {
 public:
     enum View { Search, Likes, Playlists, PlaylistContents };
     Q_ENUM(View)
+    enum SearchKind { MusicVideos, Channels, PublicPlaylists };
+    Q_ENUM(SearchKind)
 
     Q_PROPERTY(View view READ view NOTIFY pageChanged FINAL)
+    Q_PROPERTY(SearchKind searchKind READ searchKind WRITE setSearchKind NOTIFY pageChanged FINAL)
     Q_PROPERTY(QString playlistTitle READ playlistTitle NOTIFY pageChanged FINAL)
     Q_PROPERTY(QAbstractItemModel *results READ results CONSTANT FINAL)
     Q_PROPERTY(bool loading READ loading NOTIFY pageChanged FINAL)
@@ -37,6 +40,8 @@ public:
     explicit YouTubeController(QObject *parent = nullptr);
 
     View view() const { return m_view; }
+    SearchKind searchKind() const { return m_searchKind; }
+    void setSearchKind(SearchKind kind);
     QString playlistTitle() const { return m_playlistTitle; }
     QAbstractItemModel *results() { return &m_results; }
     bool loading() const { return m_reply != nullptr; }
@@ -58,8 +63,7 @@ public:
     Q_INVOKABLE void showPlaylist(const QString &id, const QString &title);
     Q_INVOKABLE void loadMore();
     Q_INVOKABLE void retry();
-    Q_INVOKABLE void play(const QString &id);
-    Q_INVOKABLE void openPlaylist();
+    Q_INVOKABLE void leavePlaylist();
     Q_INVOKABLE void openSource();
     Q_INVOKABLE void openYouTubeTerms();
     Q_INVOKABLE void openGooglePrivacy();
@@ -91,6 +95,9 @@ private:
     QString m_channelName;
     QString m_channelError;
     View m_view = Search;
+    View m_playlistOrigin = Search;
+    SearchKind m_searchKind = MusicVideos;
+    QString m_searchTerm;
     QString m_value;
     QString m_playlistTitle;
     QString m_nextPage;

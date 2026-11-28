@@ -10,7 +10,7 @@ namespace swiftify::youtube {
 
 namespace {
 
-enum Role { IdRole = Qt::UserRole + 1, TitleRole, ChannelRole, ArtworkRole };
+enum Role { IdRole = Qt::UserRole + 1, TitleRole, ChannelRole, ArtworkRole, DescriptionRole };
 
 } // namespace
 
@@ -22,7 +22,7 @@ YouTubeController::YouTubeController(QObject *parent)
     , m_apiKey(qgetenv("SWIFTIFY_YOUTUBE_API_KEY").trimmed())
 {
     m_results.setItemRoleNames({{IdRole, "itemId"}, {TitleRole, "itemTitle"},
-                               {ChannelRole, "channel"}, {ArtworkRole, "artwork"}});
+                               {ChannelRole, "channel"}, {ArtworkRole, "artwork"}, {DescriptionRole, "description"}});
     connect(&m_authorization, &GoogleAuthorization::changed, this, [this] {
         const bool connected = signedIn();
         if (std::exchange(m_connected, connected) != connected) {
@@ -47,21 +47,28 @@ void YouTubeController::showSearch()
     emit pageChanged();
 }
 
+void YouTubeController::setSearchKind(SearchKind kind)
+{
+    if (m_searchKind == kind || kind < MusicVideos || kind > PublicPlaylists) return;
+    m_searchKind = kind;
+    if (m_view == Search) {
+        reset(Search);
+        m_searchTerm.clear();
+    }
+    emit pageChanged();
+}
+
 void YouTubeController::search(const QString &term)
 {
     const QString query = term.trimmed();
     if (query.isEmpty()) return;
     reset(Search);
     if (!canSearch()) {
-        QUrl url(QStringLiteral("https://music.youtube.com/search"));
-        QUrlQuery parameters;
-        parameters.addQueryItem(QStringLiteral("q"), QString::fromLatin1(QUrl::toPercentEncoding(query)));
-        url.setQuery(parameters);
+        m_error = tr("Configure API access to search YouTube.");
         emit pageChanged();
-        open(url);
         return;
     }
-    m_value = query;
+    m_searchTerm = m_value = query;
     fetch(false);
 }
 
@@ -81,7 +88,8 @@ void YouTubeController::showPlaylists()
 
 void YouTubeController::showPlaylist(const QString &id, const QString &title)
 {
-    if (m_channelName.isEmpty() || playlistUrl(id).isEmpty()) return;
+    if (!canSearch() || !validCollectionId(id)) return;
+    m_playlistOrigin = m_view;
     reset(PlaylistContents);
     m_value = id;
     m_playlistTitle = title;
@@ -103,14 +111,17 @@ void YouTubeController::retryChannel()
     if (signedIn() && !m_channelError.isEmpty()) loadChannel();
 }
 
-void YouTubeController::play(const QString &id)
+void YouTubeController::leavePlaylist()
 {
-    open(watchUrl(id));
-}
-
-void YouTubeController::openPlaylist()
-{
-    if (m_view == PlaylistContents) open(playlistUrl(m_value));
+    if (m_view != PlaylistContents) return;
+    if (m_playlistOrigin == Playlists) {
+        showPlaylists();
+    } else if (!m_searchTerm.isEmpty()) {
+        const QString priorQuery = m_searchTerm;
+        search(priorQuery);
+    } else {
+        showSearch();
+    }
 }
 
 void YouTubeController::openSource()
@@ -149,9 +160,10 @@ void YouTubeController::reset(View view)
 void YouTubeController::fetch(bool more)
 {
     if (m_reply) return;
-    const bool publicSearch = m_view == Search && !m_apiKey.isEmpty();
-    const QByteArray token = publicSearch ? QByteArray() : m_authorization.accessToken();
-    if (token.isEmpty() && (m_view != Search || m_apiKey.isEmpty())) {
+    const bool useKey = !m_apiKey.isEmpty() && (m_view == Search
+        || (m_view == PlaylistContents && m_playlistOrigin == Search && !signedIn()));
+    const QByteArray token = useKey ? QByteArray() : m_authorization.accessToken();
+    if (token.isEmpty() && !useKey) {
         m_error = tr("Sign in to access this collection.");
         emit pageChanged();
         return;
@@ -179,6 +191,7 @@ void YouTubeController::fetch(bool more)
                 row->setData(item.title, TitleRole);
                 row->setData(item.channel, ChannelRole);
                 row->setData(item.artwork, ArtworkRole);
+                row->setData(item.description, DescriptionRole);
                 m_results.appendRow(row);
             }
         }
@@ -222,7 +235,13 @@ void YouTubeController::open(const QUrl &url)
 Collection YouTubeController::collection() const
 {
     switch (m_view) {
-    case Search: return Collection::Search;
+    case Search:
+        switch (m_searchKind) {
+        case Channels: return Collection::SearchChannels;
+        case PublicPlaylists: return Collection::SearchPlaylists;
+        case MusicVideos: return Collection::Search;
+        }
+        break;
     case Likes: return Collection::Likes;
     case Playlists: return Collection::Playlists;
     case PlaylistContents: return Collection::PlaylistItems;

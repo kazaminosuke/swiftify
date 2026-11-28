@@ -22,16 +22,16 @@ a spotify player for desktop, built with Qt Quick on top of a Rust core that wra
 
 </div>
 
-## YouTube workspace in this fork
+## YouTube catalogue in this fork
 
-The Windows and Linux builds open a native Qt Quick workspace for music-video
-search, liked music videos and owned YouTube playlists. Playback opens the
-official service in the system browser. See the [setup and feature details](docs/youtube-fork.md#running-the-desktop-client)
-for the branch, Google credentials and current API coverage.
+The Windows and Linux builds with the YouTube client enabled open a Qt Quick
+catalogue for videos, channels and playlists. Guest search uses a configured
+API key. Read-only Google sign-in adds liked music and owned playlists.
+See the [catalogue setup](docs/youtube-catalogue.md) for credentials and
+coverage.
 
-The upstream Spotify and local-file workspace described below is available
-with `swiftify --spotify`. Builds with `-DSWIFTIFY_YOUTUBE_CLIENT=OFF` start
-that workspace by default.
+Use `swiftify --spotify` for the Spotify and local-file workspace below.
+Builds with `-DSWIFTIFY_YOUTUBE_CLIENT=OFF` start that workspace directly.
 
 ## about
 

@@ -11,13 +11,14 @@ class QNetworkReply;
 
 namespace swiftify::youtube {
 
-enum class Collection { Search, Likes, Playlists, PlaylistItems, Channel };
+enum class Collection { Search, SearchChannels, SearchPlaylists, Likes, Playlists, PlaylistItems, Channel };
 
 struct Item {
     QString id;
     QString title;
     QString channel;
     QUrl artwork;
+    QString description;
 };
 
 struct Page {
@@ -42,7 +43,6 @@ private:
     QUrl m_base;
 };
 
-QUrl watchUrl(const QString &videoId);
-QUrl playlistUrl(const QString &playlistId);
+bool validCollectionId(const QString &id);
 
 } // namespace swiftify::youtube
