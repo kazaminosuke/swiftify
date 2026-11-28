@@ -55,7 +55,7 @@ ZIP を削除します。試用中に編集した音楽ファイルや同じ場�
 - 未設定のローカル起動と再生中の外部通信
 
 試用版では、ローカル再生と音声処理を上記の手順で確認できます。
-YouTube Music は [バックエンド検証](youtube-music-backend.md)を参照してください。
+YouTube Music の配信経路と候補の比較は [CachyOS での検証手順](youtube-music-cachyos-validation.md)を参照してください。
 [Alignment Lab](../tools/alignment-lab/README.md) は別途ビルドする任意ツールです。
 
 ## CachyOS でソースからビルドする場合
